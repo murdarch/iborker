@@ -164,10 +164,20 @@ async def lookup_contract(
 
 
 async def get_margin(symbol: str, exchange: str | None = None) -> MarginInfo | None:
-    """Get margin requirements for a contract.
+    """Get margin requirements for a contract using whatIfOrder.
 
-    Note: Requires a funded account with margin data permissions.
+    Submits a simulated BUY order to get margin impact from IB.
+    Requires a funded account with trading permissions.
+
+    Args:
+        symbol: Globex symbol (e.g., ES, NQ, CL)
+        exchange: Exchange override (auto-detected if not provided)
+
+    Returns:
+        MarginInfo with initial and maintenance margin, or None if unavailable.
     """
+    from ib_insync import MarketOrder
+
     if exchange is None:
         info = get_symbol_info(symbol)
         if info:
@@ -183,11 +193,45 @@ async def get_margin(symbol: str, exchange: str | None = None) -> MarginInfo | N
         if not qualified:
             return None
 
-        # Request margin info - this may not work on all account types
-        # IB doesn't have a direct margin query API, we'd need to use
-        # reqMarginOrder or parse account data
-        # For now, return None as this requires more complex implementation
-        # TODO: Implement margin query using whatIfOrder or account summary
+        c = qualified[0]
+
+        # Use whatIfOrder to get margin requirements
+        # This simulates placing an order without actually submitting it
+        order = MarketOrder("BUY", 1)
+
+        try:
+            order_state = await ib.whatIfOrderAsync(c, order)
+        except Exception:
+            # whatIfOrder may fail on some account types or contracts
+            return None
+
+        if order_state is None:
+            return None
+
+        # Parse margin values - they come as strings with currency
+        init_margin = _parse_margin_value(order_state.initMarginChange)
+        maint_margin = _parse_margin_value(order_state.maintMarginChange)
+
+        if init_margin is None:
+            return None
+
+        return MarginInfo(
+            symbol=symbol,
+            initial_margin=init_margin,
+            maintenance_margin=maint_margin or init_margin,
+            currency="USD",
+        )
+
+
+def _parse_margin_value(value: str | None) -> float | None:
+    """Parse margin value string from IB (e.g., '12345.67' or '12,345.67')."""
+    if not value:
+        return None
+    try:
+        # Remove commas and currency symbols
+        cleaned = value.replace(",", "").replace("$", "").strip()
+        return float(cleaned)
+    except (ValueError, AttributeError):
         return None
 
 
@@ -302,6 +346,45 @@ def list_symbols(
             name = FUTURES_DATABASE[sym][1]
             typer.echo(f"  {sym:6} - {name}")
         typer.echo()
+
+
+@app.command()
+def margin(
+    symbol: Annotated[str, typer.Argument(help="Globex symbol (e.g., ES, NQ, CL)")],
+    exchange: Annotated[
+        str | None, typer.Option("--exchange", "-e", help="Exchange override")
+    ] = None,
+) -> None:
+    """Query margin requirements for a futures contract.
+
+    Uses IB's whatIfOrder to get current margin requirements.
+    Requires an active IB connection with trading permissions.
+    """
+    symbol = symbol.upper()
+
+    # Show static info first
+    static = get_symbol_info(symbol)
+    if static:
+        typer.echo(f"{static[1]} ({symbol}) on {static[0]}")
+    else:
+        typer.echo(f"Querying margin for {symbol}...")
+
+    try:
+        info = asyncio.run(get_margin(symbol, exchange))
+    except Exception as e:
+        typer.echo(f"Error connecting to IB: {e}", err=True)
+        raise typer.Exit(1) from e
+
+    if info:
+        typer.echo()
+        typer.echo("Margin Requirements (per contract):")
+        typer.echo("=" * 40)
+        typer.echo(f"Initial Margin:     ${info.initial_margin:,.2f}")
+        typer.echo(f"Maintenance Margin: ${info.maintenance_margin:,.2f}")
+    else:
+        typer.echo("Margin data unavailable", err=True)
+        typer.echo("(Requires funded account with trading permissions)", err=True)
+        raise typer.Exit(1)
 
 
 def _display_contract(info: ContractInfo, cached: bool = False) -> None:
