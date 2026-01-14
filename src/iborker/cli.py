@@ -2,7 +2,7 @@
 
 import typer
 
-from iborker import history
+from iborker import contracts, history
 
 app = typer.Typer(
     name="iborker",
@@ -11,6 +11,7 @@ app = typer.Typer(
 )
 
 app.add_typer(history.app, name="history")
+app.add_typer(contracts.app, name="contract")
 
 
 @app.command()
