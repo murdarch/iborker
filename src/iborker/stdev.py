@@ -334,12 +334,14 @@ async def fetch_options_chain(
     contract = Future(symbol=symbol, exchange=exchange)
 
     async with connect() as ib:
-        # Qualify to get the front month contract
-        qualified = await ib.qualifyContractsAsync(contract)
-        if not qualified:
+        # Get contract details to find front month
+        details = await ib.reqContractDetailsAsync(contract)
+        if not details:
             raise ValueError(f"Could not find contract: {symbol} on {exchange}")
 
-        fut_contract = qualified[0]
+        # Sort by expiration and pick front month
+        details.sort(key=lambda d: d.contract.lastTradeDateOrContractMonth)
+        fut_contract = details[0].contract
 
         # Get current underlying price
         underlying_price = await get_underlying_price(ib, fut_contract)
@@ -347,7 +349,7 @@ async def fetch_options_chain(
         # Get option chain parameters
         chains = await ib.reqSecDefOptParamsAsync(
             underlyingSymbol=fut_contract.symbol,
-            futFopExchange="",
+            futFopExchange=fut_contract.exchange,
             underlyingSecType="FUT",
             underlyingConId=fut_contract.conId,
         )
@@ -387,6 +389,7 @@ async def fetch_options_chain(
                     right=right,
                     exchange=chain.exchange,
                     multiplier=chain.multiplier,
+                    tradingClass=chain.tradingClass,
                 )
                 option_contracts.append(opt)
                 options.append(
