@@ -630,32 +630,56 @@ def analyze(
         typer.echo()
 
 
-async def fetch_spx_0dte_iv() -> tuple[float, float, float, str]:
-    """Fetch SPX 0DTE options and extract ATM IV.
+async def fetch_spx_0dte_iv() -> tuple[float, float, float, str, float, float]:
+    """Fetch SPX 0DTE options and extract ATM IV, plus ES for fair value.
 
     Returns:
-        Tuple of (spx_price, atm_strike, atm_iv, expiration)
+        Tuple of (spx_price, atm_strike, atm_iv, expiration, es_price, fair_value)
     """
     spx = Index(symbol="SPX", exchange="CBOE")
+    es = Future(symbol="ES", exchange="CME")
 
     async with connect() as ib:
-        # Qualify the index
-        qualified = await ib.qualifyContractsAsync(spx)
-        if not qualified:
+        # Qualify both contracts
+        qualified_spx = await ib.qualifyContractsAsync(spx)
+        if not qualified_spx:
             raise ValueError("Could not find SPX index")
-        spx = qualified[0]
+        spx = qualified_spx[0]
 
-        # Get current SPX price
-        ticker = ib.reqMktData(spx, "", False, False)
+        # Get ES front month
+        es_details = await ib.reqContractDetailsAsync(es)
+        if not es_details:
+            raise ValueError("Could not find ES contract")
+        es_details.sort(key=lambda d: d.contract.lastTradeDateOrContractMonth)
+        es = es_details[0].contract
+
+        # Get both prices simultaneously
+        spx_ticker = ib.reqMktData(spx, "", False, False)
+        es_ticker = ib.reqMktData(es, "", False, False)
         await asyncio.sleep(2)
         ib.cancelMktData(spx)
+        ib.cancelMktData(es)
 
-        if ticker.last and ticker.last > 0:
-            spx_price = ticker.last
-        elif ticker.close and ticker.close > 0:
-            spx_price = ticker.close
+        # Extract SPX price
+        if spx_ticker.last and spx_ticker.last > 0:
+            spx_price = spx_ticker.last
+        elif spx_ticker.close and spx_ticker.close > 0:
+            spx_price = spx_ticker.close
         else:
             raise ValueError("Could not get SPX price")
+
+        # Extract ES price
+        if es_ticker.last and es_ticker.last > 0:
+            es_price = es_ticker.last
+        elif es_ticker.bid and es_ticker.ask:
+            es_price = (es_ticker.bid + es_ticker.ask) / 2
+        elif es_ticker.close and es_ticker.close > 0:
+            es_price = es_ticker.close
+        else:
+            raise ValueError("Could not get ES price")
+
+        # Calculate fair value (ES - SPX spread)
+        fair_value = es_price - spx_price
 
         # Get option chain parameters
         chains = await ib.reqSecDefOptParamsAsync(
@@ -731,27 +755,31 @@ async def fetch_spx_0dte_iv() -> tuple[float, float, float, str]:
 
         atm_iv = sum(ivs) / len(ivs)
 
-        return spx_price, atm_strike, atm_iv, dte_exp
+        return spx_price, atm_strike, atm_iv, dte_exp, es_price, fair_value
 
 
 @app.command()
 def spx0dte(
-    fair_value: Annotated[
-        float,
-        typer.Option("--fv", "-f", help="ES-SPX fair value offset (ES = SPX + FV)"),
-    ] = 10.0,
+    fv_override: Annotated[
+        float | None,
+        typer.Option("--fv", "-f", help="Override fair value (default: auto-calc)"),
+    ] = None,
 ) -> None:
     """Calculate ES daily expected move using SPX 0DTE options IV."""
-    typer.echo("Fetching SPX 0DTE options...")
+    typer.echo("Fetching SPX 0DTE options + ES price...")
 
     try:
-        spx_price, atm_strike, atm_iv, expiration = asyncio.run(fetch_spx_0dte_iv())
+        spx_price, atm_strike, atm_iv, expiration, es_price, fair_value = asyncio.run(
+            fetch_spx_0dte_iv()
+        )
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1) from e
 
-    # Convert to ES equivalent
-    es_price = spx_price + fair_value
+    # Use override if provided, otherwise use calculated fair value
+    if fv_override is not None:
+        fair_value = fv_override
+        es_price = spx_price + fair_value
 
     # Calculate daily expected move (1 day)
     daily_move = es_price * atm_iv * math.sqrt(1 / 365)
