@@ -703,14 +703,14 @@ async def fetch_spx_0dte_iv() -> tuple[float, float, float, str, float, float, b
         if not chains:
             raise ValueError("No SPX options chain found")
 
-        # Find SMART or CBOE chain
+        # Find SPXW chain (weekly/0DTE options, not monthly SPX)
         chain = None
         for c in chains:
-            if c.exchange in ("SMART", "CBOE"):
+            if c.tradingClass == "SPXW":
                 chain = c
                 break
         if chain is None:
-            chain = chains[0]
+            raise ValueError("No SPXW (0DTE) options chain found")
 
         # Find today's expiration (0DTE)
         today = datetime.now().strftime("%Y%m%d")
