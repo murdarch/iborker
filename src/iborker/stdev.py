@@ -7,7 +7,7 @@ from enum import Enum
 from typing import Annotated
 
 import typer
-from ib_insync import Contract, Future, FuturesOption
+from ib_insync import Contract, Future, FuturesOption, Index, Option
 from pydantic import BaseModel
 
 from iborker.connection import connect
@@ -628,3 +628,149 @@ def analyze(
                 f"{band.lower:>14.2f} {band.upper:>14.2f}"
             )
         typer.echo()
+
+
+async def fetch_spx_0dte_iv() -> tuple[float, float, float, str]:
+    """Fetch SPX 0DTE options and extract ATM IV.
+
+    Returns:
+        Tuple of (spx_price, atm_strike, atm_iv, expiration)
+    """
+    spx = Index(symbol="SPX", exchange="CBOE")
+
+    async with connect() as ib:
+        # Qualify the index
+        qualified = await ib.qualifyContractsAsync(spx)
+        if not qualified:
+            raise ValueError("Could not find SPX index")
+        spx = qualified[0]
+
+        # Get current SPX price
+        ticker = ib.reqMktData(spx, "", False, False)
+        await asyncio.sleep(2)
+        ib.cancelMktData(spx)
+
+        if ticker.last and ticker.last > 0:
+            spx_price = ticker.last
+        elif ticker.close and ticker.close > 0:
+            spx_price = ticker.close
+        else:
+            raise ValueError("Could not get SPX price")
+
+        # Get option chain parameters
+        chains = await ib.reqSecDefOptParamsAsync(
+            underlyingSymbol="SPX",
+            futFopExchange="",
+            underlyingSecType="IND",
+            underlyingConId=spx.conId,
+        )
+
+        if not chains:
+            raise ValueError("No SPX options chain found")
+
+        # Find SMART or CBOE chain
+        chain = None
+        for c in chains:
+            if c.exchange in ("SMART", "CBOE"):
+                chain = c
+                break
+        if chain is None:
+            chain = chains[0]
+
+        # Find today's expiration (0DTE)
+        today = datetime.now().strftime("%Y%m%d")
+        expirations = sorted(chain.expirations)
+
+        # Find closest expiration (today or next available)
+        dte_exp = None
+        for exp in expirations:
+            if exp >= today:
+                dte_exp = exp
+                break
+
+        if dte_exp is None:
+            raise ValueError("No 0DTE or near-term SPX expiration found")
+
+        # Find ATM strike
+        strikes = sorted(chain.strikes)
+        atm_strike = min(strikes, key=lambda s: abs(s - spx_price))
+
+        # Build ATM call and put options (SPXW = weekly/0DTE options)
+        options = []
+        for right in ["C", "P"]:
+            opt = Option(
+                symbol="SPX",
+                lastTradeDateOrContractMonth=dte_exp,
+                strike=atm_strike,
+                right=right,
+                exchange="SMART",
+                tradingClass="SPXW",
+            )
+            options.append(opt)
+
+        # Qualify and get market data
+        qualified_opts = await ib.qualifyContractsAsync(*options)
+
+        tickers = []
+        for opt in qualified_opts:
+            if opt.conId:
+                t = ib.reqMktData(opt, "", False, False)
+                tickers.append((opt, t))
+
+        await asyncio.sleep(3)
+
+        # Extract IVs
+        ivs = []
+        for opt, t in tickers:
+            if t.modelGreeks and t.modelGreeks.impliedVol:
+                ivs.append(t.modelGreeks.impliedVol)
+            ib.cancelMktData(opt)
+
+        if not ivs:
+            raise ValueError("Could not get IV from SPX 0DTE options")
+
+        atm_iv = sum(ivs) / len(ivs)
+
+        return spx_price, atm_strike, atm_iv, dte_exp
+
+
+@app.command()
+def spx0dte(
+    fair_value: Annotated[
+        float,
+        typer.Option("--fv", "-f", help="ES-SPX fair value offset (ES = SPX + FV)"),
+    ] = 10.0,
+) -> None:
+    """Calculate ES daily expected move using SPX 0DTE options IV."""
+    typer.echo("Fetching SPX 0DTE options...")
+
+    try:
+        spx_price, atm_strike, atm_iv, expiration = asyncio.run(fetch_spx_0dte_iv())
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1) from e
+
+    # Convert to ES equivalent
+    es_price = spx_price + fair_value
+
+    # Calculate daily expected move (1 day)
+    daily_move = es_price * atm_iv * math.sqrt(1 / 365)
+
+    typer.echo("\nSPX 0DTE → ES Expected Move")
+    typer.echo("=" * 50)
+    typer.echo(f"  SPX Price:     {spx_price:.2f}")
+    typer.echo(f"  SPX ATM:       {atm_strike:.0f}")
+    typer.echo(f"  SPX 0DTE IV:   {atm_iv:.2%}")
+    typer.echo(f"  Expiration:    {expiration}")
+    typer.echo(f"  Fair Value:    {fair_value:+.1f}")
+    typer.echo("=" * 50)
+    typer.echo(f"  ES Equivalent: {es_price:.2f}")
+    typer.echo("-" * 50)
+    typer.echo(f"  {'Band':<6} {'Probability':>12} {'Lower':>12} {'Upper':>12}")
+    typer.echo("-" * 50)
+
+    for sigma, prob in [(1, 0.6827), (2, 0.9545), (3, 0.9973)]:
+        move = daily_move * sigma
+        lower = es_price - move
+        upper = es_price + move
+        typer.echo(f"  {sigma}σ{' ' * 4} {prob:>11.1%} {lower:>12.2f} {upper:>12.2f}")
