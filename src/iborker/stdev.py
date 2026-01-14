@@ -630,11 +630,12 @@ def analyze(
         typer.echo()
 
 
-async def fetch_spx_0dte_iv() -> tuple[float, float, float, str, float, float]:
+async def fetch_spx_0dte_iv() -> tuple[float, float, float, str, float, float, bool]:
     """Fetch SPX 0DTE options and extract ATM IV, plus ES for fair value.
 
     Returns:
-        Tuple of (spx_price, atm_strike, atm_iv, expiration, es_price, fair_value)
+        Tuple of (spx_price, atm_strike, atm_iv, expiration,
+                  es_price, fair_value, is_live)
     """
     spx = Index(symbol="SPX", exchange="CBOE")
     es = Future(symbol="ES", exchange="CME")
@@ -660,15 +661,16 @@ async def fetch_spx_0dte_iv() -> tuple[float, float, float, str, float, float]:
         ib.cancelMktData(spx)
         ib.cancelMktData(es)
 
-        # Extract SPX price
-        if spx_ticker.last and spx_ticker.last > 0:
+        # Extract SPX price - check if market is open
+        spx_is_live = spx_ticker.last and spx_ticker.last > 0
+        if spx_is_live:
             spx_price = spx_ticker.last
         elif spx_ticker.close and spx_ticker.close > 0:
             spx_price = spx_ticker.close
         else:
             raise ValueError("Could not get SPX price")
 
-        # Extract ES price
+        # Extract current ES price (for display/calculation)
         if es_ticker.last and es_ticker.last > 0:
             es_price = es_ticker.last
         elif es_ticker.bid and es_ticker.ask:
@@ -678,8 +680,17 @@ async def fetch_spx_0dte_iv() -> tuple[float, float, float, str, float, float]:
         else:
             raise ValueError("Could not get ES price")
 
-        # Calculate fair value (ES - SPX spread)
-        fair_value = es_price - spx_price
+        # Calculate fair value using consistent timestamps
+        if spx_is_live:
+            # Market open: use live prices
+            fair_value = es_price - spx_price
+        else:
+            # Pre-market: use close prices for accurate spread
+            if es_ticker.close and es_ticker.close > 0:
+                es_close = es_ticker.close
+            else:
+                es_close = es_price
+            fair_value = es_close - spx_price  # Both are close prices
 
         # Get option chain parameters
         chains = await ib.reqSecDefOptParamsAsync(
@@ -755,7 +766,7 @@ async def fetch_spx_0dte_iv() -> tuple[float, float, float, str, float, float]:
 
         atm_iv = sum(ivs) / len(ivs)
 
-        return spx_price, atm_strike, atm_iv, dte_exp, es_price, fair_value
+        return spx_price, atm_strike, atm_iv, dte_exp, es_price, fair_value, spx_is_live
 
 
 @app.command()
@@ -769,8 +780,8 @@ def spx0dte(
     typer.echo("Fetching SPX 0DTE options + ES price...")
 
     try:
-        spx_price, atm_strike, atm_iv, expiration, es_price, fair_value = asyncio.run(
-            fetch_spx_0dte_iv()
+        spx_price, atm_strike, atm_iv, expiration, es_price, fair_value, is_live = (
+            asyncio.run(fetch_spx_0dte_iv())
         )
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
@@ -784,15 +795,18 @@ def spx0dte(
     # Calculate daily expected move (1 day)
     daily_move = es_price * atm_iv * math.sqrt(1 / 365)
 
+    # Indicate price source
+    price_src = "live" if is_live else "close"
+
     typer.echo("\nSPX 0DTE → ES Expected Move")
     typer.echo("=" * 50)
-    typer.echo(f"  SPX Price:     {spx_price:.2f}")
+    typer.echo(f"  SPX Price:     {spx_price:.2f} ({price_src})")
     typer.echo(f"  SPX ATM:       {atm_strike:.0f}")
     typer.echo(f"  SPX 0DTE IV:   {atm_iv:.2%}")
     typer.echo(f"  Expiration:    {expiration}")
-    typer.echo(f"  Fair Value:    {fair_value:+.1f}")
+    typer.echo(f"  Fair Value:    {fair_value:+.1f} (from {price_src})")
     typer.echo("=" * 50)
-    typer.echo(f"  ES Equivalent: {es_price:.2f}")
+    typer.echo(f"  ES Price:      {es_price:.2f} (live)")
     typer.echo("-" * 50)
     typer.echo(f"  {'Band':<6} {'Probability':>12} {'Lower':>12} {'Upper':>12}")
     typer.echo("-" * 50)
