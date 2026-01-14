@@ -333,7 +333,7 @@ async def fetch_options_chain(
 
     contract = Future(symbol=symbol, exchange=exchange)
 
-    async with connect() as ib:
+    async with connect("stdev") as ib:
         # Get contract details to find front month
         details = await ib.reqContractDetailsAsync(contract)
         if not details:
@@ -640,7 +640,7 @@ async def fetch_spx_0dte_iv() -> tuple[float, float, float, str, float, float, b
     spx = Index(symbol="SPX", exchange="CBOE")
     es = Future(symbol="ES", exchange="CME")
 
-    async with connect() as ib:
+    async with connect("stdev") as ib:
         # Qualify both contracts
         qualified_spx = await ib.qualifyContractsAsync(spx)
         if not qualified_spx:

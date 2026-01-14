@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import dearpygui.dearpygui as dpg
 from ib_insync import IB, Contract, Future, MarketOrder, Position
 
+from iborker.client_id import get_client_id, release_client_id
 from iborker.config import settings
 
 
@@ -54,28 +55,31 @@ class ClickTrader:
     async def connect(self) -> None:
         """Connect to IB."""
         self.ib = IB()
+        client_id = get_client_id("trader")
         try:
             await self.ib.connectAsync(
                 host=settings.host,
                 port=settings.port,
-                clientId=settings.client_id,
+                clientId=client_id,
                 timeout=settings.timeout,
                 readonly=settings.readonly,
             )
             self.state.connected = True
-            self._update_status("Connected to IB")
+            self._update_status(f"Connected (client {client_id})")
 
             # Subscribe to position updates
             self.ib.positionEvent += self._on_position
             self.ib.pnlSingleEvent += self._on_pnl
 
         except Exception as e:
+            release_client_id("trader")
             self._update_status(f"Connection failed: {e}")
 
     async def disconnect(self) -> None:
         """Disconnect from IB."""
         if self.ib is not None:
             self.ib.disconnect()
+            release_client_id("trader")
             self.state.connected = False
             self._update_status("Disconnected")
 

@@ -65,7 +65,7 @@ async def fetch_historical_data(
 
     contract = Future(symbol=symbol, exchange=exchange)
 
-    async with connect() as ib:
+    async with connect("history") as ib:
         # Qualify the contract to get full details
         qualified = await ib.qualifyContractsAsync(contract)
         if not qualified:

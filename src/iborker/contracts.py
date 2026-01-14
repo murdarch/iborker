@@ -140,7 +140,7 @@ async def lookup_contract(
 
     contract = Future(symbol=symbol, exchange=exchange)
 
-    async with connect() as ib:
+    async with connect("contracts") as ib:
         qualified = await ib.qualifyContractsAsync(contract)
 
         if not qualified:
@@ -187,7 +187,7 @@ async def get_margin(symbol: str, exchange: str | None = None) -> MarginInfo | N
 
     contract = Future(symbol=symbol, exchange=exchange)
 
-    async with connect() as ib:
+    async with connect("contracts") as ib:
         qualified = await ib.qualifyContractsAsync(contract)
 
         if not qualified:
