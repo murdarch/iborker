@@ -9,6 +9,7 @@ from datetime import date
 import dearpygui.dearpygui as dpg
 from ib_insync import IB, Contract, Future, MarketOrder, Position, Ticker
 
+from iborker import __version__
 from iborker.client_id import get_client_id, release_client_id
 from iborker.config import settings
 from iborker.contracts import FUTURES_DATABASE
@@ -769,6 +770,12 @@ class ClickTrader:
             dpg.add_text(
                 "Shortcuts: Q=qty, B/S/F/R + Ctrl+Enter",
                 color=(150, 150, 150),
+            )
+
+            # Version and author
+            dpg.add_text(
+                f"v{__version__} by @murdarch",
+                color=(100, 100, 100),
             )
 
         # Themes for buttons
