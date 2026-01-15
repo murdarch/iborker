@@ -111,6 +111,13 @@ class ClickTrader:
             self.ib.positionEvent += self._on_position
             self.ib.pnlSingleEvent += self._on_pnl
 
+            # Auto-set contract from symbol input
+            if dpg.does_item_exist("symbol_input"):
+                symbol = dpg.get_value("symbol_input")
+                exchange = dpg.get_value("exchange_input")
+                if symbol:
+                    await self.set_contract(symbol, exchange)
+
         except Exception as e:
             release_client_id("trader")
             self.ib = None  # Clean up failed connection
@@ -665,7 +672,7 @@ class ClickTrader:
                     width=80,
                 )
                 dpg.add_button(
-                    label="Set Contract",
+                    label="Go",
                     callback=self._on_set_contract_click,
                 )
 
