@@ -17,13 +17,16 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
-# IB bar size mappings
+# IB bar size mappings (key -> IB barSizeSetting string)
 BAR_SIZES = {
-    1: "1 min",
-    5: "5 mins",
-    15: "15 mins",
-    30: "30 mins",
-    60: "1 hour",
+    "1m": "1 min",
+    "5m": "5 mins",
+    "15m": "15 mins",
+    "30m": "30 mins",
+    "1h": "1 hour",
+    "4h": "4 hours",
+    "1d": "1 day",
+    "1w": "1 week",
 }
 
 
@@ -43,7 +46,7 @@ class BarData(BaseModel):
 async def fetch_historical_data(
     symbol: str,
     exchange: str,
-    bar_size: int,
+    bar_size: str,
     duration: str,
     end_date: datetime | None = None,
 ) -> list[BarData]:
@@ -52,13 +55,14 @@ async def fetch_historical_data(
     Args:
         symbol: Futures symbol (e.g., ES, NQ, CL)
         exchange: Exchange name (e.g., CME, NYMEX)
-        bar_size: Bar size in minutes (1, 5, 15, 30, 60)
+        bar_size: Bar size key (1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w)
         duration: Duration string (e.g., "1 D", "1 W", "1 M")
         end_date: End date for data (default: now)
 
     Returns:
         List of bar data.
     """
+    bar_size = bar_size.lower()
     if bar_size not in BAR_SIZES:
         valid = list(BAR_SIZES.keys())
         raise ValueError(f"Invalid bar size: {bar_size}. Must be one of {valid}")
@@ -127,8 +131,8 @@ def download(
     symbol: Annotated[str, typer.Argument(help="Futures symbol (e.g., ES, NQ, CL)")],
     exchange: Annotated[str, typer.Option("--exchange", "-e", help="Exchange")] = "CME",
     bar_size: Annotated[
-        int, typer.Option("--bar-size", "-b", help="Bar size in minutes")
-    ] = 5,
+        str, typer.Option("--bar-size", "-b", help="1m,5m,15m,30m,1h,4h,1d,1w")
+    ] = "5m",
     duration: Annotated[
         str, typer.Option("--duration", "-d", help="Duration (e.g., '1 D')")
     ] = "1 D",
@@ -140,7 +144,7 @@ def download(
     ] = "csv",
 ) -> None:
     """Download historical OHLCV data for a futures contract."""
-    typer.echo(f"Downloading {symbol} {bar_size}min bars from {exchange}...")
+    typer.echo(f"Downloading {symbol} {bar_size} bars from {exchange}...")
 
     try:
         bars = asyncio.run(fetch_historical_data(symbol, exchange, bar_size, duration))
@@ -156,7 +160,7 @@ def download(
 
     # Determine output path
     if output is None:
-        output = Path(f"{symbol}_{bar_size}min.{output_format}")
+        output = Path(f"{symbol}_{bar_size}.{output_format}")
 
     # Export
     if output_format == "csv":

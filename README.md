@@ -69,17 +69,20 @@ iborker-trader
 Download OHLCV data for futures contracts.
 
 ```bash
-# Download 1-minute bars for ES front month
-iborker history download ES --bar-size 1 --duration "1 D"
+# Download 5-minute bars (default)
+iborker history download ES --duration "1 D"
 
-# Download 5-minute bars
-iborker history download ES --bar-size 5 --duration "1 D"
+# Download 1-minute bars
+iborker history download ES --bar-size 1m --duration "1 D"
 
-# Download hourly bars
-iborker history download NQ --bar-size 60 --duration "5 D"
+# Download 4-hour bars
+iborker history download ES --bar-size 4h --duration "5 D"
+
+# Download daily bars
+iborker history download NQ --bar-size 1d --duration "1 Y"
 ```
 
-Valid bar sizes: 1, 5, 15, 30, 60 (minutes)
+Valid bar sizes: `1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1d`, `1w`
 
 ### Contract Lookup
 
