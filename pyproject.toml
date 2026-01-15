@@ -5,6 +5,10 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/iborker"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"src/iborker/icon-32.png" = "iborker/icon-32.png"
+"src/iborker/icon-64.png" = "iborker/icon-64.png"
+
 [project]
 name = "iborker"
 version = "0.1.0"

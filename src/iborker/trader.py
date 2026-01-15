@@ -6,6 +6,7 @@ import webbrowser
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
+from pathlib import Path
 
 import dearpygui.dearpygui as dpg
 from ib_insync import IB, Contract, Future, MarketOrder, Position, Ticker
@@ -821,6 +822,16 @@ class ClickTrader:
             dpg.add_key_press_handler(callback=self._on_key_press)
 
         dpg.create_viewport(title="iborker Click Trader", width=350, height=400)
+
+        # Set window icons
+        icon_dir = Path(__file__).parent
+        icon_small = icon_dir / "icon-32.png"
+        icon_large = icon_dir / "icon-64.png"
+        if icon_small.exists():
+            dpg.set_viewport_small_icon(str(icon_small))
+        if icon_large.exists():
+            dpg.set_viewport_large_icon(str(icon_large))
+
         dpg.setup_dearpygui()
         dpg.set_primary_window("main_window", True)
 

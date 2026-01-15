@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="branding/logo-dark.png" alt="iborker logo" width="400">
+</p>
+
 # iborker
 
 CLI and GUI tools for Interactive Brokers futures trading.
