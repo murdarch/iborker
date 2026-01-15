@@ -46,6 +46,8 @@ Fast order entry GUI for futures trading.
 
 ![Click Trader Screenshot](docs/iborker-trader.png)
 
+[View connection demo video](docs/iborker-trader-connect.mp4)
+
 ```bash
 iborker-trader
 ```
@@ -72,6 +74,8 @@ iborker-trader
 
 Download OHLCV data for futures contracts.
 
+![History Download](docs/iborker-history.png)
+
 ```bash
 # Download 5-minute bars (default)
 iborker history download ES --duration "1 D"
@@ -96,6 +100,8 @@ Valid bar sizes: `1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1d`, `1w`
 
 Look up contract details and margin requirements.
 
+![Contract List](docs/iborker-contract-lookup.png)
+
 ```bash
 # Look up contract details
 iborker contract lookup ES
@@ -110,6 +116,8 @@ iborker contract margin ES --quantity 4
 ### Expected Move Calculator
 
 Calculate expected price moves using options-implied volatility.
+
+![Expected Move](docs/iborker-expected-move.png)
 
 ```bash
 # Full analysis with sigma bands
