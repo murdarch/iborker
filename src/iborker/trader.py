@@ -576,11 +576,14 @@ class ClickTrader:
 
         if key_code in action_map:
             action, btn_tag = action_map[key_code]
+            # Unfocus quantity input so keystroke doesn't go into it
+            dpg.focus_item(btn_tag)
             self._highlight_action(action, btn_tag)
             return
 
         # P toggles P&L mode
         if key_code == key_p:
+            dpg.focus_item("main_window")  # Unfocus quantity input
             self._toggle_pnl_mode()
             return
 
