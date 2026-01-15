@@ -535,6 +535,10 @@ class ClickTrader:
         if not action:
             return
 
+        # Clear highlight BEFORE executing to prevent double-execution
+        # if user accidentally taps Ctrl+Enter multiple times
+        self._clear_highlight()
+
         if action == "buy":
             self._on_buy_click()
         elif action == "sell":
@@ -543,8 +547,6 @@ class ClickTrader:
             self._on_flatten_click()
         elif action == "reverse":
             self._on_reverse_click()
-
-        self._clear_highlight()
 
     def create_ui(self) -> None:
         """Create the DearPyGui interface."""
