@@ -105,8 +105,7 @@ class ClickTrader:
             # Get available accounts and populate dropdown
             self.state.accounts = self.ib.managedAccounts()
             if self.state.accounts:
-                self.state.account = self.state.accounts[0]
-                self._populate_account_dropdown()
+                self._populate_account_dropdown()  # This sorts and sets default
 
             # Subscribe to position updates
             self.ib.positionEvent += self._on_position
@@ -488,10 +487,12 @@ class ClickTrader:
         others = [acct for acct in self.state.accounts if acct not in nicknamed]
         sorted_accounts = nicknamed + others
 
-        # Update state.accounts to use this order
+        # Update state.accounts to use this order and set default
         self.state.accounts = sorted_accounts
-        if sorted_accounts and self.state.account not in sorted_accounts:
-            self.state.account = sorted_accounts[0]
+        if sorted_accounts:
+            # Set first sorted account as default if not already set
+            if not self.state.account or self.state.account not in sorted_accounts:
+                self.state.account = sorted_accounts[0]
 
         display_names = [
             self._get_account_display_name(acct) for acct in sorted_accounts
