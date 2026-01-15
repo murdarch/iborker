@@ -40,6 +40,8 @@ IB_ACCOUNT_NICKNAMES={"U1234567": "Main", "U7654321": "IRA"}
 
 Fast order entry GUI for futures trading.
 
+![Click Trader Screenshot](docs/iborker-trader.png)
+
 ```bash
 iborker-trader
 ```
