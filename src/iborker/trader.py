@@ -273,7 +273,11 @@ class ClickTrader:
         """Handle position update."""
         if self.state.contract and position.contract.conId == self.state.contract.conId:
             self.state.position = int(position.position)
-            self.state.avg_cost = position.avgCost
+            # IB returns avgCost as price * multiplier for futures, normalize it
+            if self.state.multiplier > 0:
+                self.state.avg_cost = position.avgCost / self.state.multiplier
+            else:
+                self.state.avg_cost = position.avgCost
             self._update_display()
 
     def _on_pnl(self, pnl) -> None:
