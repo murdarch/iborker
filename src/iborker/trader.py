@@ -454,17 +454,36 @@ class ClickTrader:
         """Handle connect button click."""
         self._run_async(self.connect())
 
+    def _get_account_display_name(self, account_id: str) -> str:
+        """Get display name for account (nickname if configured, else ID)."""
+        return settings.account_nicknames.get(account_id, account_id)
+
+    def _get_account_id_from_display(self, display_name: str) -> str:
+        """Map display name back to account ID."""
+        # Check if display_name is a nickname
+        for acct_id, nickname in settings.account_nicknames.items():
+            if nickname == display_name:
+                return acct_id
+        # Otherwise it's the raw account ID
+        return display_name
+
     def _populate_account_dropdown(self) -> None:
         """Populate account dropdown with available accounts."""
         if not dpg.does_item_exist("account_combo"):
             return
         if self.state.accounts:
-            dpg.configure_item("account_combo", items=self.state.accounts)
-            dpg.set_value("account_combo", self.state.account)
+            display_names = [
+                self._get_account_display_name(acct) for acct in self.state.accounts
+            ]
+            dpg.configure_item("account_combo", items=display_names)
+            dpg.set_value(
+                "account_combo", self._get_account_display_name(self.state.account)
+            )
 
     def _on_account_change(self, sender, app_data) -> None:
         """Handle account selection change."""
-        self.state.account = app_data
+        # Map display name back to account ID
+        self.state.account = self._get_account_id_from_display(app_data)
         # Reset position and P&L for new account
         self.state.position = 0
         self.state.avg_cost = 0.0

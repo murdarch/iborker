@@ -24,5 +24,8 @@ class IBSettings(BaseSettings):
     client_id_start: int = 1  # Base/floor for auto-allocated IDs
     client_id_mode: Literal["auto", "fixed"] = "auto"
 
+    # Account nicknames: {"U1234567": "IRA", "U7654321": "Main"}
+    account_nicknames: dict[str, str] = {}
+
 
 settings = IBSettings()
