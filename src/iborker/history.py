@@ -6,10 +6,10 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from ib_insync import Future
 from pydantic import BaseModel
 
 from iborker.connection import connect
+from iborker.contracts import resolve_front_month
 
 app = typer.Typer(
     name="history",
@@ -49,33 +49,31 @@ async def fetch_historical_data(
     bar_size: str,
     duration: str,
     end_date: datetime | None = None,
-) -> list[BarData]:
+) -> tuple[str, list[BarData]]:
     """Fetch historical bars from IB.
 
     Args:
-        symbol: Futures symbol (e.g., ES, NQ, CL)
+        symbol: Futures symbol (e.g., ES, NQ, CL) or specific contract (ESH6)
         exchange: Exchange name (e.g., CME, NYMEX)
         bar_size: Bar size key (1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w)
         duration: Duration string (e.g., "1 D", "1 W", "1 M")
         end_date: End date for data (default: now)
 
     Returns:
-        List of bar data.
+        Tuple of (local_symbol, list of bar data).
     """
     bar_size = bar_size.lower()
     if bar_size not in BAR_SIZES:
         valid = list(BAR_SIZES.keys())
         raise ValueError(f"Invalid bar size: {bar_size}. Must be one of {valid}")
 
-    contract = Future(symbol=symbol, exchange=exchange)
-
     async with connect("history") as ib:
-        # Qualify the contract to get full details
-        qualified = await ib.qualifyContractsAsync(contract)
-        if not qualified:
+        # Resolve to front month if ambiguous
+        contract = await resolve_front_month(ib, symbol, exchange)
+        if not contract:
             raise ValueError(f"Could not find contract: {symbol} on {exchange}")
 
-        contract = qualified[0]
+        local_symbol = contract.localSymbol
 
         bars = await ib.reqHistoricalDataAsync(
             contract,
@@ -87,7 +85,7 @@ async def fetch_historical_data(
             formatDate=1,
         )
 
-        return [
+        bar_list = [
             BarData(
                 date=bar.date,
                 open=bar.open,
@@ -100,6 +98,7 @@ async def fetch_historical_data(
             )
             for bar in bars
         ]
+        return local_symbol, bar_list
 
 
 def export_csv(bars: list[BarData], output: Path) -> None:
@@ -147,11 +146,15 @@ def download(
     typer.echo(f"Downloading {symbol} {bar_size} bars from {exchange}...")
 
     try:
-        bars = asyncio.run(fetch_historical_data(symbol, exchange, bar_size, duration))
+        local_symbol, bars = asyncio.run(
+            fetch_historical_data(symbol, exchange, bar_size, duration)
+        )
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1) from e
 
+    if local_symbol != symbol.upper():
+        typer.echo(f"Resolved to {local_symbol}")
     typer.echo(f"Downloaded {len(bars)} bars")
 
     if not bars:
@@ -160,7 +163,7 @@ def download(
 
     # Determine output path
     if output is None:
-        output = Path(f"{symbol}_{bar_size}.{output_format}")
+        output = Path(f"{local_symbol}_{bar_size}.{output_format}")
 
     # Export
     if output_format == "csv":

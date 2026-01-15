@@ -118,6 +118,66 @@ def get_front_month_code() -> str:
     return f"{month_codes[month_idx]}{year}"
 
 
+async def resolve_front_month(
+    ib, symbol: str, exchange: str = "CME"
+) -> Future | None:
+    """Resolve a symbol to its front month contract.
+
+    Args:
+        ib: Connected IB instance
+        symbol: Base symbol (ES, NQ, etc.) or specific contract (ESH6)
+        exchange: Exchange name
+
+    Returns:
+        Qualified front month contract, or None if not found.
+    """
+    from datetime import date
+
+    symbol = symbol.upper().strip()
+
+    # Try as specific local symbol first (e.g., ESH6)
+    contract = Future(localSymbol=symbol, exchange=exchange)
+    qualified = await ib.qualifyContractsAsync(contract)
+    if len(qualified) == 1:
+        return qualified[0]
+
+    # Try as base symbol - get all contracts and find front month
+    contract = Future(symbol=symbol, exchange=exchange)
+    details = await ib.reqContractDetailsAsync(contract)
+
+    if not details:
+        return None
+
+    # Filter to quarterly months (H=Mar, M=Jun, U=Sep, Z=Dec)
+    quarterly_codes = {"H", "M", "U", "Z"}
+    today = date.today().strftime("%Y%m%d")
+
+    quarterly_contracts = []
+    for d in details:
+        local = d.contract.localSymbol
+        if len(local) >= 2:
+            month_code = local[-2]
+            if month_code in quarterly_codes:
+                expiry = d.contract.lastTradeDateOrContractMonth
+                if expiry >= today:
+                    quarterly_contracts.append((expiry, d.contract))
+
+    if not quarterly_contracts:
+        # Fallback: nearest available contract
+        all_contracts = [
+            (d.contract.lastTradeDateOrContractMonth, d.contract)
+            for d in details
+            if d.contract.lastTradeDateOrContractMonth >= today
+        ]
+        if all_contracts:
+            all_contracts.sort(key=lambda x: x[0])
+            return all_contracts[0][1]
+        return None
+
+    quarterly_contracts.sort(key=lambda x: x[0])
+    return quarterly_contracts[0][1]
+
+
 async def lookup_contract(
     symbol: str, exchange: str | None = None
 ) -> ContractInfo | None:
