@@ -114,23 +114,84 @@ class ClickTrader:
             self.state.connected = False
             self._update_status("Disconnected")
 
+    async def _resolve_contract(self, symbol: str, exchange: str) -> Contract | None:
+        """Resolve symbol to a specific contract.
+
+        If symbol is ambiguous (e.g., 'ES'), selects the front month.
+        If symbol is specific (e.g., 'ESH6'), uses that contract.
+        """
+        symbol = symbol.upper().strip()
+
+        # Try as a specific local symbol first (e.g., ESH6)
+        contract = Future(localSymbol=symbol, exchange=exchange)
+        qualified = await self.ib.qualifyContractsAsync(contract)
+        if len(qualified) == 1:
+            return qualified[0]
+
+        # Try as base symbol - will return multiple contracts
+        contract = Future(symbol=symbol, exchange=exchange)
+        details = await self.ib.reqContractDetailsAsync(contract)
+
+        if not details:
+            self._update_status(f"Contract not found: {symbol}")
+            return None
+
+        # Filter to quarterly months (H=Mar, M=Jun, U=Sep, Z=Dec) and sort by expiry
+        quarterly_codes = {"H", "M", "U", "Z"}
+        today = date.today().strftime("%Y%m%d")
+
+        quarterly_contracts = []
+        for d in details:
+            local = d.contract.localSymbol
+            # Month code is second-to-last character (e.g., ESH6 -> H)
+            if len(local) >= 2:
+                month_code = local[-2]
+                if month_code in quarterly_codes:
+                    expiry = d.contract.lastTradeDateOrContractMonth
+                    if expiry >= today:
+                        quarterly_contracts.append((expiry, d.contract))
+
+        if not quarterly_contracts:
+            # Fallback: use nearest of any available contract
+            all_contracts = [
+                (d.contract.lastTradeDateOrContractMonth, d.contract)
+                for d in details
+                if d.contract.lastTradeDateOrContractMonth >= today
+            ]
+            if all_contracts:
+                all_contracts.sort(key=lambda x: x[0])
+                return all_contracts[0][1]
+            self._update_status(f"No active contracts for: {symbol}")
+            return None
+
+        # Sort by expiry and return the front month
+        quarterly_contracts.sort(key=lambda x: x[0])
+        front_month = quarterly_contracts[0][1]
+        self._update_status(f"Using front month: {front_month.localSymbol}")
+        return front_month
+
     async def set_contract(self, symbol: str, exchange: str = "CME") -> None:
-        """Set the trading contract."""
+        """Set the trading contract.
+
+        Accepts:
+        - Base symbol (ES, NQ, etc.) - auto-selects front month
+        - Full local symbol (ESH6, NQM6, etc.) - uses specific contract
+        """
         if self.ib is None or not self.state.connected:
             self._update_status("Not connected")
             return
 
-        contract = Future(symbol=symbol, exchange=exchange)
-        qualified = await self.ib.qualifyContractsAsync(contract)
+        # Check if symbol includes month code (e.g., ESH6, NQM6)
+        selected_contract = await self._resolve_contract(symbol, exchange)
 
-        if qualified:
-            self.state.contract = qualified[0]
+        if selected_contract:
+            self.state.contract = selected_contract
             self._update_status(f"Contract: {self.state.contract.localSymbol}")
 
-            # Get multiplier from database
-            symbol_upper = symbol.upper()
-            if symbol_upper in FUTURES_DATABASE:
-                self.state.multiplier = FUTURES_DATABASE[symbol_upper][2]
+            # Get multiplier from database (use resolved contract's base symbol)
+            base_symbol = self.state.contract.symbol.upper()
+            if base_symbol in FUTURES_DATABASE:
+                self.state.multiplier = FUTURES_DATABASE[base_symbol][2]
             elif self.state.contract.multiplier:
                 self.state.multiplier = float(self.state.contract.multiplier)
 
