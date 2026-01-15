@@ -468,17 +468,36 @@ class ClickTrader:
         return display_name
 
     def _populate_account_dropdown(self) -> None:
-        """Populate account dropdown with available accounts."""
+        """Populate account dropdown with available accounts.
+
+        Order: accounts with nicknames first (in config order), then remaining.
+        """
         if not dpg.does_item_exist("account_combo"):
             return
-        if self.state.accounts:
-            display_names = [
-                self._get_account_display_name(acct) for acct in self.state.accounts
-            ]
-            dpg.configure_item("account_combo", items=display_names)
-            dpg.set_value(
-                "account_combo", self._get_account_display_name(self.state.account)
-            )
+        if not self.state.accounts:
+            return
+
+        # Sort: nicknamed accounts in config order, then others
+        nicknamed = [
+            acct
+            for acct in settings.account_nicknames.keys()
+            if acct in self.state.accounts
+        ]
+        others = [acct for acct in self.state.accounts if acct not in nicknamed]
+        sorted_accounts = nicknamed + others
+
+        # Update state.accounts to use this order
+        self.state.accounts = sorted_accounts
+        if sorted_accounts and self.state.account not in sorted_accounts:
+            self.state.account = sorted_accounts[0]
+
+        display_names = [
+            self._get_account_display_name(acct) for acct in sorted_accounts
+        ]
+        dpg.configure_item("account_combo", items=display_names)
+        dpg.set_value(
+            "account_combo", self._get_account_display_name(self.state.account)
+        )
 
     def _on_account_change(self, sender, app_data) -> None:
         """Handle account selection change."""
