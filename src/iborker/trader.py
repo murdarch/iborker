@@ -777,7 +777,7 @@ class ClickTrader:
             with dpg.group(horizontal=True):
                 dpg.add_text(f"v{__version__} by", color=(100, 100, 100))
                 dpg.add_button(
-                    label="Murdarch",
+                    label="murdarch",
                     tag="author_link",
                     callback=lambda: webbrowser.open("https://x.com/murd_arch"),
                     small=True,
