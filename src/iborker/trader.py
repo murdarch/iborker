@@ -459,14 +459,17 @@ class ClickTrader:
         """Handle flatten button click."""
         self._run_async(self.flatten())
 
-    def _on_key_press(self, sender, key_code) -> None:
+    def _on_key_press(self, sender, app_data) -> None:
         """Handle keyboard shortcuts."""
-        # Key codes for letters (DearPyGui uses ASCII-like codes)
-        key_q = ord("Q")
-        key_b = ord("B")
-        key_s = ord("S")
-        key_f = ord("F")
-        key_r = ord("R")
+        key_code = app_data  # DearPyGui passes key code in app_data
+
+        # DearPyGui key constants
+        key_q = dpg.mvKey_Q
+        key_b = dpg.mvKey_B
+        key_s = dpg.mvKey_S
+        key_f = dpg.mvKey_F
+        key_r = dpg.mvKey_R
+        key_p = dpg.mvKey_P
         key_enter = dpg.mvKey_Return
 
         # Check for Ctrl modifier (left or right)
@@ -490,6 +493,11 @@ class ClickTrader:
         if key_code in action_map:
             action, btn_tag = action_map[key_code]
             self._highlight_action(action, btn_tag)
+            return
+
+        # P toggles P&L mode
+        if key_code == key_p:
+            self._toggle_pnl_mode()
             return
 
         # Ctrl+Enter executes highlighted action
