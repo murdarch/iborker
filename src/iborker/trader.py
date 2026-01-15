@@ -404,8 +404,10 @@ class ClickTrader:
         key_r = ord("R")
         key_enter = dpg.mvKey_Return
 
-        # Check for Ctrl modifier
-        ctrl_pressed = dpg.is_key_down(dpg.mvKey_Control)
+        # Check for Ctrl modifier (left or right)
+        ctrl_pressed = dpg.is_key_down(dpg.mvKey_LControl) or dpg.is_key_down(
+            dpg.mvKey_RControl
+        )
 
         if key_code == key_q:
             # Focus quantity input
