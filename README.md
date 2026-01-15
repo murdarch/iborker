@@ -84,6 +84,10 @@ iborker history download NQ --bar-size 1d --duration "1 Y"
 
 Valid bar sizes: `1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1d`, `1w`
 
+**Output columns:** `date`, `open`, `high`, `low`, `close`, `volume`, `average` (VWAP), `bar_count`
+
+**Default filename:** `{contract}_{barsize}_{from}_{to}.csv` (e.g., `ESH6_5m_20250110_20250114.csv`)
+
 ### Contract Lookup
 
 Look up contract details and margin requirements.
