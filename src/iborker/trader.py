@@ -114,6 +114,7 @@ class ClickTrader:
 
         except Exception as e:
             release_client_id("trader")
+            self.ib = None  # Clean up failed connection
             self._update_status(f"Connection failed: {e}")
 
     async def disconnect(self) -> None:
@@ -791,8 +792,8 @@ class ClickTrader:
         try:
             dpg.start_dearpygui()
         finally:
-            # Cleanup - wait for disconnect to complete before stopping loop
-            if self.state.connected:
+            # Cleanup - disconnect if connected, then stop event loop
+            if self.ib is not None:
                 self._run_async_wait(self.disconnect())
             self._stop_event_loop()
             dpg.destroy_context()
