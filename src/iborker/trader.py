@@ -121,6 +121,7 @@ class ClickTrader:
         """Disconnect from IB."""
         if self.ib is not None:
             self.ib.disconnect()
+            self.ib = None  # Prevent destructor from running after event loop closes
             release_client_id("trader")
             self.state.connected = False
             self._update_status("Disconnected")
