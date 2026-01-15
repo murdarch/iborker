@@ -101,6 +101,8 @@ class ClickTrader:
             )
             self.state.connected = True
             self._update_status(f"Connected (client {client_id})")
+            if dpg.does_item_exist("connect_btn"):
+                dpg.configure_item("connect_btn", label="Disconnect")
 
             # Get available accounts and populate dropdown
             self.state.accounts = self.ib.managedAccounts()
@@ -131,6 +133,8 @@ class ClickTrader:
             release_client_id("trader")
             self.state.connected = False
             self._update_status("Disconnected")
+            if dpg.does_item_exist("connect_btn"):
+                dpg.configure_item("connect_btn", label="Connect")
 
     async def _resolve_contract(self, symbol: str, exchange: str) -> Contract | None:
         """Resolve symbol to a specific contract.
@@ -459,8 +463,11 @@ class ClickTrader:
         self.state.quantity = max(1, int(value))
 
     def _on_connect_click(self) -> None:
-        """Handle connect button click."""
-        self._run_async(self.connect())
+        """Handle connect/disconnect button click."""
+        if self.state.connected:
+            self._run_async(self.disconnect())
+        else:
+            self._run_async(self.connect())
 
     def _get_account_display_name(self, account_id: str) -> str:
         """Get display name for account (nickname if configured, else ID)."""
@@ -643,7 +650,10 @@ class ClickTrader:
             # Connection section
             with dpg.group(horizontal=True):
                 dpg.add_button(
-                    label="Connect", callback=self._on_connect_click, width=100
+                    label="Connect",
+                    tag="connect_btn",
+                    callback=self._on_connect_click,
+                    width=100,
                 )
                 dpg.add_text("Disconnected", tag="status_text")
 
