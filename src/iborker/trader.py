@@ -2,6 +2,7 @@
 
 import asyncio
 import threading
+import webbrowser
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
@@ -773,10 +774,24 @@ class ClickTrader:
             )
 
             # Version and author
-            dpg.add_text(
-                f"v{__version__} by @murdarch",
-                color=(100, 100, 100),
-            )
+            with dpg.group(horizontal=True):
+                dpg.add_text(f"v{__version__} by", color=(100, 100, 100))
+                dpg.add_button(
+                    label="Murdarch",
+                    tag="author_link",
+                    callback=lambda: webbrowser.open("https://x.com/murd_arch"),
+                    small=True,
+                )
+
+        # Link theme (no background, looks like hyperlink)
+        with dpg.theme(tag="_link_theme"):
+            with dpg.theme_component(dpg.mvButton):
+                dpg.add_theme_color(dpg.mvThemeCol_Button, (0, 0, 0, 0))
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, (0, 0, 0, 0))
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, (0, 0, 0, 0))
+                dpg.add_theme_color(dpg.mvThemeCol_Text, (100, 100, 100))
+                dpg.add_theme_style(dpg.mvStyleVar_FramePadding, 0, 0)
+        dpg.bind_item_theme("author_link", "_link_theme")
 
         # Themes for buttons
         with dpg.theme() as buy_theme:
