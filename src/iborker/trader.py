@@ -157,6 +157,10 @@ class ClickTrader:
             self._update_status("No contract selected")
             return
 
+        # Capture pre-trade state for realized P&L calculation
+        prev_position = self.state.position
+        prev_avg_cost = self.state.avg_cost
+
         order = MarketOrder(action=action, totalQuantity=quantity)
         trade = self.ib.placeOrder(self.state.contract, order)
         self._update_status(f"Order placed: {action} {quantity}")
@@ -166,8 +170,13 @@ class ClickTrader:
             await asyncio.sleep(0.1)
 
         if trade.orderStatus.status == "Filled":
-            price = trade.orderStatus.avgFillPrice
-            self._update_status(f"Filled: {action} {quantity} @ {price}")
+            fill_price = trade.orderStatus.avgFillPrice
+            self._update_status(f"Filled: {action} {quantity} @ {fill_price}")
+
+            # Calculate realized P&L (per-contract) for closed portion
+            self._calculate_realized_pnl(
+                prev_position, prev_avg_cost, action, quantity, fill_price
+            )
         else:
             self._update_status(f"Order status: {trade.orderStatus.status}")
 
@@ -210,6 +219,29 @@ class ClickTrader:
         """Handle PnL update."""
         self.state.unrealized_pnl = pnl.unrealizedPnL or 0.0
         self._update_display()
+
+    def _calculate_realized_pnl(
+        self,
+        prev_position: int,
+        prev_avg_cost: float,
+        action: str,
+        quantity: int,
+        fill_price: float,
+    ) -> None:
+        """Calculate and accumulate realized P&L (per-contract) for closed portion."""
+        if prev_position == 0:
+            # Opening new position, no realized P&L
+            return
+
+        # Calculate per-contract realized P&L for closed portion
+        if prev_position > 0 and action == "SELL":
+            # Closing long: realized = exit - entry
+            realized_points = fill_price - prev_avg_cost
+            self.state.daily_realized_points += realized_points
+        elif prev_position < 0 and action == "BUY":
+            # Closing short: realized = entry - exit
+            realized_points = prev_avg_cost - fill_price
+            self.state.daily_realized_points += realized_points
 
     def _on_tick(self, tickers: set[Ticker]) -> None:
         """Handle tick updates for market data."""
