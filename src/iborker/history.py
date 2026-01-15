@@ -163,7 +163,10 @@ def download(
 
     # Determine output path
     if output is None:
-        output = Path(f"{local_symbol}_{bar_size}.{output_format}")
+        from_date = bars[0].date.strftime("%Y%m%d")
+        to_date = bars[-1].date.strftime("%Y%m%d")
+        filename = f"{local_symbol}_{bar_size}_{from_date}_{to_date}.{output_format}"
+        output = Path(filename)
 
     # Export
     if output_format == "csv":
