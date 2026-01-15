@@ -25,6 +25,10 @@ class TraderState:
     quantity: int = 1
     connected: bool = False
 
+    # Account
+    account: str = ""
+    accounts: list[str] | None = None
+
     # Market data
     bid: float = 0.0
     ask: float = 0.0
@@ -97,6 +101,12 @@ class ClickTrader:
             )
             self.state.connected = True
             self._update_status(f"Connected (client {client_id})")
+
+            # Get available accounts and populate dropdown
+            self.state.accounts = self.ib.managedAccounts()
+            if self.state.accounts:
+                self.state.account = self.state.accounts[0]
+                self._populate_account_dropdown()
 
             # Subscribe to position updates
             self.ib.positionEvent += self._on_position
@@ -203,9 +213,9 @@ class ClickTrader:
             self.ib.pendingTickersEvent += self._on_tick
             self.ib.reqMktData(self.state.contract)
 
-            # Request PnL updates
+            # Request PnL updates for selected account
             self.ib.reqPnLSingle(
-                account=self.ib.wrapper.accounts[0] if self.ib.wrapper.accounts else "",
+                account=self.state.account,
                 modelCode="",
                 conId=self.state.contract.conId,
             )
@@ -223,6 +233,7 @@ class ClickTrader:
         prev_avg_cost = self.state.avg_cost
 
         order = MarketOrder(action=action, totalQuantity=quantity)
+        order.account = self.state.account
         trade = self.ib.placeOrder(self.state.contract, order)
         self._update_status(f"Order placed: {action} {quantity}")
 
@@ -271,14 +282,21 @@ class ClickTrader:
 
     def _on_position(self, position: Position) -> None:
         """Handle position update."""
-        if self.state.contract and position.contract.conId == self.state.contract.conId:
-            self.state.position = int(position.position)
-            # IB returns avgCost as price * multiplier for futures, normalize it
-            if self.state.multiplier > 0:
-                self.state.avg_cost = position.avgCost / self.state.multiplier
-            else:
-                self.state.avg_cost = position.avgCost
-            self._update_display()
+        # Filter by account and contract
+        if position.account != self.state.account:
+            return
+        if not self.state.contract:
+            return
+        if position.contract.conId != self.state.contract.conId:
+            return
+
+        self.state.position = int(position.position)
+        # IB returns avgCost as price * multiplier for futures, normalize it
+        if self.state.multiplier > 0:
+            self.state.avg_cost = position.avgCost / self.state.multiplier
+        else:
+            self.state.avg_cost = position.avgCost
+        self._update_display()
 
     def _on_pnl(self, pnl) -> None:
         """Handle PnL update."""
@@ -436,6 +454,24 @@ class ClickTrader:
         """Handle connect button click."""
         self._run_async(self.connect())
 
+    def _populate_account_dropdown(self) -> None:
+        """Populate account dropdown with available accounts."""
+        if not dpg.does_item_exist("account_combo"):
+            return
+        if self.state.accounts:
+            dpg.configure_item("account_combo", items=self.state.accounts)
+            dpg.set_value("account_combo", self.state.account)
+
+    def _on_account_change(self, sender, app_data) -> None:
+        """Handle account selection change."""
+        self.state.account = app_data
+        # Reset position and P&L for new account
+        self.state.position = 0
+        self.state.avg_cost = 0.0
+        self.state.daily_realized_points = 0.0
+        self._update_display()
+        self._update_status(f"Account: {app_data}")
+
     def _on_set_contract_click(self) -> None:
         """Handle set contract button click."""
         symbol = dpg.get_value("symbol_input")
@@ -559,6 +595,17 @@ class ClickTrader:
                     label="Connect", callback=self._on_connect_click, width=100
                 )
                 dpg.add_text("Disconnected", tag="status_text")
+
+            # Account selection (populated after connect)
+            with dpg.group(horizontal=True):
+                dpg.add_text("Account:")
+                dpg.add_combo(
+                    tag="account_combo",
+                    items=[],
+                    default_value="",
+                    callback=self._on_account_change,
+                    width=150,
+                )
 
             dpg.add_separator()
 
