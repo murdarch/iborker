@@ -380,13 +380,13 @@ class ClickTrader:
             price_str = f"{price:.2f}" if price > 0 else "---"
             dpg.set_value("market_price_text", f"{label}: {price_str}")
 
-        # Tick direction indicator
+        # Tick direction indicator (ASCII for font compatibility)
         if dpg.does_item_exist("tick_indicator"):
             if self.state.tick_direction == "up":
-                dpg.set_value("tick_indicator", "▲")
+                dpg.set_value("tick_indicator", "^")
                 dpg.configure_item("tick_indicator", color=(0, 255, 0))
             elif self.state.tick_direction == "down":
-                dpg.set_value("tick_indicator", "▼")
+                dpg.set_value("tick_indicator", "v")
                 dpg.configure_item("tick_indicator", color=(255, 0, 0))
             else:
                 dpg.set_value("tick_indicator", " ")
