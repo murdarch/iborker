@@ -35,9 +35,18 @@ class ClickTrader:
         self._thread: threading.Thread | None = None
 
     def _run_async(self, coro: Callable) -> None:
-        """Run coroutine in the background event loop."""
-        if self._loop is not None:
+        """Run coroutine in the background event loop (fire and forget)."""
+        if self._loop is not None and self._loop.is_running():
             asyncio.run_coroutine_threadsafe(coro, self._loop)
+
+    def _run_async_wait(self, coro: Callable, timeout: float = 5.0) -> None:
+        """Run coroutine and wait for completion."""
+        if self._loop is not None and self._loop.is_running():
+            future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+            try:
+                future.result(timeout=timeout)
+            except Exception:
+                pass  # Ignore errors during cleanup
 
     def _start_event_loop(self) -> None:
         """Start asyncio event loop in background thread."""
@@ -51,6 +60,7 @@ class ClickTrader:
             self._loop.call_soon_threadsafe(self._loop.stop)
             if self._thread is not None:
                 self._thread.join(timeout=2.0)
+            self._loop = None
 
     async def connect(self) -> None:
         """Connect to IB."""
@@ -342,8 +352,9 @@ class ClickTrader:
         try:
             dpg.start_dearpygui()
         finally:
-            # Cleanup
-            self._run_async(self.disconnect())
+            # Cleanup - wait for disconnect to complete before stopping loop
+            if self.state.connected:
+                self._run_async_wait(self.disconnect())
             self._stop_event_loop()
             dpg.destroy_context()
 
