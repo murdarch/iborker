@@ -20,49 +20,52 @@ app = typer.Typer(
 )
 
 # Common Globex/exchange futures symbols
-# Format: symbol -> (exchange, name, multiplier, tick_size)
-FUTURES_DATABASE: dict[str, tuple[str, str, float, float]] = {
-    # CME Equity Index
-    "ES": ("CME", "E-mini S&P 500", 50.0, 0.25),
-    "NQ": ("CME", "E-mini NASDAQ-100", 20.0, 0.25),
-    "RTY": ("CME", "E-mini Russell 2000", 50.0, 0.10),
-    "YM": ("CBOT", "E-mini Dow ($5)", 5.0, 1.0),
-    "MES": ("CME", "Micro E-mini S&P 500", 5.0, 0.25),
-    "MNQ": ("CME", "Micro E-mini NASDAQ-100", 2.0, 0.25),
-    "MYM": ("CBOT", "Micro E-mini Dow", 0.5, 1.0),
-    "M2K": ("CME", "Micro E-mini Russell 2000", 5.0, 0.10),
-    # CME FX
-    "6E": ("CME", "Euro FX", 125000.0, 0.00005),
-    "6J": ("CME", "Japanese Yen", 12500000.0, 0.0000005),
-    "6B": ("CME", "British Pound", 62500.0, 0.0001),
-    "6A": ("CME", "Australian Dollar", 100000.0, 0.0001),
-    "6C": ("CME", "Canadian Dollar", 100000.0, 0.00005),
-    "6S": ("CME", "Swiss Franc", 125000.0, 0.0001),
-    # NYMEX Energy
-    "CL": ("NYMEX", "Crude Oil", 1000.0, 0.01),
-    "NG": ("NYMEX", "Natural Gas", 10000.0, 0.001),
-    "RB": ("NYMEX", "RBOB Gasoline", 42000.0, 0.0001),
-    "HO": ("NYMEX", "Heating Oil", 42000.0, 0.0001),
-    "MCL": ("NYMEX", "Micro Crude Oil", 100.0, 0.01),
-    # COMEX Metals
-    "GC": ("COMEX", "Gold", 100.0, 0.10),
-    "SI": ("COMEX", "Silver", 5000.0, 0.005),
-    "HG": ("COMEX", "Copper", 25000.0, 0.0005),
-    "MGC": ("COMEX", "Micro Gold", 10.0, 0.10),
-    "SIL": ("COMEX", "Micro Silver", 1000.0, 0.005),
-    # CBOT Grains
-    "ZC": ("CBOT", "Corn", 50.0, 0.25),
-    "ZS": ("CBOT", "Soybeans", 50.0, 0.25),
-    "ZW": ("CBOT", "Wheat", 50.0, 0.25),
-    "ZM": ("CBOT", "Soybean Meal", 100.0, 0.10),
-    "ZL": ("CBOT", "Soybean Oil", 60000.0, 0.01),
-    # CBOT Treasuries
-    "ZB": ("CBOT", "30-Year T-Bond", 1000.0, 0.03125),
-    "ZN": ("CBOT", "10-Year T-Note", 1000.0, 0.015625),
-    "ZF": ("CBOT", "5-Year T-Note", 1000.0, 0.0078125),
-    "ZT": ("CBOT", "2-Year T-Note", 2000.0, 0.0078125),
+# Format: symbol -> (exchange, name, multiplier, tick_size, liquid_months)
+# liquid_months: "HMUZ" = quarterly, "ALL" = monthly, "HKNUZ" = ag months
+FUTURES_DATABASE: dict[str, tuple[str, str, float, float, str]] = {
+    # CME Equity Index (quarterly)
+    "ES": ("CME", "E-mini S&P 500", 50.0, 0.25, "HMUZ"),
+    "NQ": ("CME", "E-mini NASDAQ-100", 20.0, 0.25, "HMUZ"),
+    "RTY": ("CME", "E-mini Russell 2000", 50.0, 0.10, "HMUZ"),
+    "YM": ("CBOT", "E-mini Dow ($5)", 5.0, 1.0, "HMUZ"),
+    "MES": ("CME", "Micro E-mini S&P 500", 5.0, 0.25, "HMUZ"),
+    "MNQ": ("CME", "Micro E-mini NASDAQ-100", 2.0, 0.25, "HMUZ"),
+    "MYM": ("CBOT", "Micro E-mini Dow", 0.5, 1.0, "HMUZ"),
+    "M2K": ("CME", "Micro E-mini Russell 2000", 5.0, 0.10, "HMUZ"),
+    # CME FX (quarterly) - IB uses currency codes, not Globex codes
+    "EUR": ("CME", "Euro FX (6E)", 125000.0, 0.00005, "HMUZ"),
+    "JPY": ("CME", "Japanese Yen (6J)", 12500000.0, 0.0000005, "HMUZ"),
+    "GBP": ("CME", "British Pound (6B)", 62500.0, 0.0001, "HMUZ"),
+    "AUD": ("CME", "Australian Dollar (6A)", 100000.0, 0.0001, "HMUZ"),
+    "CAD": ("CME", "Canadian Dollar (6C)", 100000.0, 0.00005, "HMUZ"),
+    "CHF": ("CME", "Swiss Franc (6S)", 125000.0, 0.0001, "HMUZ"),
+    # NYMEX Energy (monthly)
+    "CL": ("NYMEX", "Crude Oil", 1000.0, 0.01, "ALL"),
+    "NG": ("NYMEX", "Natural Gas", 10000.0, 0.001, "ALL"),
+    "RB": ("NYMEX", "RBOB Gasoline", 42000.0, 0.0001, "ALL"),
+    "HO": ("NYMEX", "Heating Oil", 42000.0, 0.0001, "ALL"),
+    "MCL": ("NYMEX", "Micro Crude Oil", 100.0, 0.01, "ALL"),
+    # COMEX Metals (monthly)
+    "GC": ("COMEX", "Gold", 100.0, 0.10, "ALL"),
+    "SI": ("COMEX", "Silver", 5000.0, 0.005, "ALL"),
+    "HG": ("COMEX", "Copper", 25000.0, 0.0005, "ALL"),
+    "MGC": ("COMEX", "Micro Gold", 10.0, 0.10, "ALL"),
+    # CBOT Grains (ag months: Mar, May, Jul, Sep, Dec)
+    "ZC": ("CBOT", "Corn", 50.0, 0.25, "HKNUZ"),
+    "ZS": ("CBOT", "Soybeans", 50.0, 0.25, "HKNUZ"),
+    "ZW": ("CBOT", "Wheat", 50.0, 0.25, "HKNUZ"),
+    "ZM": ("CBOT", "Soybean Meal", 100.0, 0.10, "HKNUZ"),
+    "ZL": ("CBOT", "Soybean Oil", 60000.0, 0.01, "HKNUZ"),
+    # CBOT Treasuries (quarterly)
+    "ZB": ("CBOT", "30-Year T-Bond", 1000.0, 0.03125, "HMUZ"),
+    "UB": ("CBOT", "Ultra T-Bond", 1000.0, 0.03125, "HMUZ"),
+    "ZN": ("CBOT", "10-Year T-Note", 1000.0, 0.015625, "HMUZ"),
+    "ZF": ("CBOT", "5-Year T-Note", 1000.0, 0.0078125, "HMUZ"),
+    "ZT": ("CBOT", "2-Year T-Note", 2000.0, 0.0078125, "HMUZ"),
+    # Crypto (monthly)
+    "MBT": ("CME", "Micro Bitcoin", 0.1, 5.0, "ALL"),
     # Other
-    "VIX": ("CFE", "VIX Futures", 1000.0, 0.05),
+    "VIX": ("CFE", "VIX Futures", 1000.0, 0.05, "ALL"),
 }
 
 
@@ -95,9 +98,65 @@ def get_known_symbols() -> list[str]:
     return sorted(FUTURES_DATABASE.keys())
 
 
-def get_symbol_info(symbol: str) -> tuple[str, str, float, float] | None:
-    """Get static info for a symbol from the database."""
-    return FUTURES_DATABASE.get(symbol.upper())
+# Aliases for Globex codes to IB symbols
+SYMBOL_ALIASES = {
+    "6E": "EUR",
+    "6J": "JPY",
+    "6B": "GBP",
+    "6A": "AUD",
+    "6C": "CAD",
+    "6S": "CHF",
+}
+
+
+def resolve_symbol(symbol: str) -> str:
+    """Resolve a symbol alias to its canonical IB symbol."""
+    symbol = symbol.upper()
+    return SYMBOL_ALIASES.get(symbol, symbol)
+
+
+def get_symbol_info(symbol: str) -> tuple[str, str, float, float, str] | None:
+    """Get static info for a symbol from the database.
+
+    Returns:
+        Tuple of (exchange, name, multiplier, tick_size, liquid_months) or None.
+    """
+    symbol = resolve_symbol(symbol.upper())
+    return FUTURES_DATABASE.get(symbol)
+
+
+# Month code to number mapping
+MONTH_CODES = {
+    "F": "01",
+    "G": "02",
+    "H": "03",
+    "J": "04",
+    "K": "05",
+    "N": "07",
+    "M": "06",
+    "Q": "08",
+    "U": "09",
+    "V": "10",
+    "X": "11",
+    "Z": "12",
+}
+
+
+def get_liquid_months(symbol: str) -> set[str]:
+    """Get the set of liquid month codes for a symbol.
+
+    Returns:
+        Set of month numbers (e.g., {"03", "06", "09", "12"} for quarterly).
+    """
+    info = get_symbol_info(symbol)
+    if not info:
+        return set(MONTH_CODES.values())  # Default to all months
+
+    liquid_months = info[4]
+    if liquid_months == "ALL":
+        return set(MONTH_CODES.values())
+
+    return {MONTH_CODES[code] for code in liquid_months if code in MONTH_CODES}
 
 
 def get_front_month_code() -> str:
@@ -118,9 +177,7 @@ def get_front_month_code() -> str:
     return f"{month_codes[month_idx]}{year}"
 
 
-async def resolve_front_month(
-    ib, symbol: str, exchange: str = "CME"
-) -> Future | None:
+async def resolve_front_month(ib, symbol: str, exchange: str = "CME") -> Future | None:
     """Resolve a symbol to its front month contract.
 
     Args:

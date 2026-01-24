@@ -6,7 +6,7 @@ from pathlib import Path
 
 import typer
 
-from iborker import contracts, history, stdev
+from iborker import contracts, history, roll, stdev
 
 SPLASH = """\
    ⢀⣤⣶⣶⣤⡀
@@ -55,6 +55,7 @@ def main(ctx: typer.Context) -> None:
 app.add_typer(history.app, name="history")
 app.add_typer(contracts.app, name="contract")
 app.add_typer(stdev.app, name="stdev")
+app.add_typer(roll.app, name="roll")
 
 
 @app.command()
