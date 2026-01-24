@@ -14,7 +14,8 @@ from ib_insync import IB, Contract, Future, MarketOrder, Position, Ticker
 from iborker import __version__
 from iborker.client_id import get_client_id, release_client_id
 from iborker.config import settings
-from iborker.contracts import FUTURES_DATABASE
+from iborker.contracts import FUTURES_DATABASE, resolve_symbol
+from iborker.roll import RollState, get_roll_status
 
 
 @dataclass
@@ -47,6 +48,10 @@ class TraderState:
 
     # Keyboard state
     highlighted_action: str | None = None  # "buy", "sell", "flatten", "reverse"
+
+    # Roll detection
+    roll_check_enabled: bool = True
+    roll_warning: str = ""  # Warning message if contract is rolling
 
 
 class ClickTrader:
@@ -199,19 +204,56 @@ class ClickTrader:
         """Set the trading contract.
 
         Accepts:
-        - Base symbol (ES, NQ, etc.) - auto-selects front month
+        - Base symbol (ES, NQ, etc.) - auto-selects based on roll status
         - Full local symbol (ESH6, NQM6, etc.) - uses specific contract
         """
         if self.ib is None or not self.state.connected:
             self._update_status("Not connected")
             return
 
-        # Check if symbol includes month code (e.g., ESH6, NQM6)
-        selected_contract = await self._resolve_contract(symbol, exchange)
+        # Clear previous roll warning
+        self.state.roll_warning = ""
+
+        # Resolve symbol alias (6E -> EUR, etc.)
+        resolved_symbol = resolve_symbol(symbol.upper())
+
+        # Check roll status if enabled and symbol is in database
+        if self.state.roll_check_enabled and resolved_symbol in FUTURES_DATABASE:
+            self._update_status(f"Checking roll status for {resolved_symbol}...")
+            try:
+                roll_status = await get_roll_status(self.ib, resolved_symbol)
+
+                if roll_status.state == RollState.ROLLING:
+                    # Use the recommended contract based on OI ratio
+                    if roll_status.ratio >= 0.5 and roll_status.back_contract:
+                        selected_contract = roll_status.back_contract
+                        local = selected_contract.localSymbol
+                        self.state.roll_warning = (
+                            f"ROLLING ({roll_status.ratio:.0%}) -> {local}"
+                        )
+                    else:
+                        selected_contract = roll_status.front_contract
+                        self.state.roll_warning = f"ROLLING ({roll_status.ratio:.0%})"
+                elif roll_status.state == RollState.POST_ROLL:
+                    selected_contract = roll_status.back_contract
+                    self.state.roll_warning = ""
+                else:
+                    # Pre-roll or unknown - use front month
+                    selected_contract = roll_status.front_contract
+            except Exception as e:
+                # Fall back to regular resolution on error
+                self._update_status(f"Roll check failed: {e}")
+                selected_contract = await self._resolve_contract(symbol, exchange)
+        else:
+            # Roll check disabled or symbol not in database
+            selected_contract = await self._resolve_contract(symbol, exchange)
 
         if selected_contract:
             self.state.contract = selected_contract
-            self._update_status(f"Contract: {self.state.contract.localSymbol}")
+            status_msg = f"Contract: {self.state.contract.localSymbol}"
+            if self.state.roll_warning:
+                status_msg += f" [{self.state.roll_warning}]"
+            self._update_status(status_msg)
 
             # Get multiplier from database (use resolved contract's base symbol)
             base_symbol = self.state.contract.symbol.upper()
@@ -854,11 +896,33 @@ class ClickTrader:
             dpg.destroy_context()
 
 
-def main() -> None:
-    """Entry point for click trader."""
+def main(no_roll_check: bool = False) -> None:
+    """Entry point for click trader.
+
+    Args:
+        no_roll_check: Disable automatic roll detection when selecting contracts.
+    """
     trader = ClickTrader()
+    if no_roll_check:
+        trader.state.roll_check_enabled = False
     trader.run()
 
 
+def cli() -> None:
+    """CLI entry point with argument parsing."""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="iborker Click Trader - Simple futures trading GUI"
+    )
+    parser.add_argument(
+        "--no-roll-check",
+        action="store_true",
+        help="Disable automatic roll detection (default: enabled)",
+    )
+    args = parser.parse_args()
+    main(no_roll_check=args.no_roll_check)
+
+
 if __name__ == "__main__":
-    main()
+    cli()
