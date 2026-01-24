@@ -64,8 +64,6 @@ FUTURES_DATABASE: dict[str, tuple[str, str, float, float, str]] = {
     "ZT": ("CBOT", "2-Year T-Note", 2000.0, 0.0078125, "HMUZ"),
     # Crypto (monthly)
     "MBT": ("CME", "Micro Bitcoin", 0.1, 5.0, "ALL"),
-    # Other
-    "VIX": ("CFE", "VIX Futures", 1000.0, 0.05, "ALL"),
 }
 
 
