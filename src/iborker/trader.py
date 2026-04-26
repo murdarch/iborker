@@ -70,6 +70,8 @@ class ClickTrader:
         self._disabled_theme: int = 0
         # Trading guard
         self._guard = TradingGuard()
+        # UI options
+        self.no_reverse: bool = False
 
     def _run_async(self, coro: Callable) -> None:
         """Run coroutine in the background event loop (fire and forget)."""
@@ -681,12 +683,13 @@ class ClickTrader:
             return
 
         # Handle action shortcuts (B, S, F, R)
-        action_map = {
+        action_map: dict[int, tuple[str, str]] = {
             key_b: ("buy", "buy_btn"),
             key_s: ("sell", "sell_btn"),
             key_f: ("flatten", "flatten_btn"),
-            key_r: ("reverse", "reverse_btn"),
         }
+        if not self.no_reverse:
+            action_map[key_r] = ("reverse", "reverse_btn")
 
         if key_code in action_map:
             action, btn_tag = action_map[key_code]
@@ -867,13 +870,14 @@ class ClickTrader:
             dpg.add_spacer(height=10)
 
             with dpg.group(horizontal=True):
-                dpg.add_button(
-                    label="REVERSE [R]",
-                    tag="reverse_btn",
-                    callback=self._on_reverse_click,
-                    width=100,
-                    height=40,
-                )
+                if not self.no_reverse:
+                    dpg.add_button(
+                        label="REVERSE [R]",
+                        tag="reverse_btn",
+                        callback=self._on_reverse_click,
+                        width=100,
+                        height=40,
+                    )
                 dpg.add_button(
                     label="FLATTEN [F]",
                     tag="flatten_btn",
@@ -883,8 +887,12 @@ class ClickTrader:
                 )
 
             # Shortcut hint
+            shortcut_hint = "Q=qty, B/S/F"
+            if not self.no_reverse:
+                shortcut_hint += "/R"
+            shortcut_hint += " + Ctrl+Enter"
             dpg.add_text(
-                "Shortcuts: Q=qty, B/S/F/R + Ctrl+Enter",
+                f"Shortcuts: {shortcut_hint}",
                 color=(150, 150, 150),
             )
 
@@ -978,15 +986,19 @@ class ClickTrader:
             dpg.destroy_context()
 
 
-def main(no_roll_check: bool = False) -> None:
+def main(no_roll_check: bool = False, no_reverse: bool = False) -> None:
     """Entry point for click trader.
 
     Args:
         no_roll_check: Disable automatic roll detection when selecting contracts.
+        no_reverse:  Remove the REVERSE button and keyboard shortcut.  Forces
+                     enter-exit discipline instead of reverse-reverse-reverse.
     """
     trader = ClickTrader()
     if no_roll_check:
         trader.state.roll_check_enabled = False
+    if no_reverse:
+        trader.no_reverse = True
     trader.run()
 
 
@@ -1002,8 +1014,13 @@ def cli() -> None:
         action="store_true",
         help="Disable automatic roll detection (default: enabled)",
     )
+    parser.add_argument(
+        "--no-reverse",
+        action="store_true",
+        help="Remove the REVERSE button (forces enter-exit discipline)",
+    )
     args = parser.parse_args()
-    main(no_roll_check=args.no_roll_check)
+    main(no_roll_check=args.no_roll_check, no_reverse=args.no_reverse)
 
 
 if __name__ == "__main__":
