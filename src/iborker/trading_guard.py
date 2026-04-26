@@ -131,20 +131,34 @@ def meeting_soon() -> tuple[bool, str]:
 # ── Combined guard ─────────────────────────────────────────────────────────────
 
 class TradingGuard:
-    """Stateless guard that answers whether trading is allowed."""
+    """Stateless guard that answers whether trading is allowed.
+
+    Two modes:
+    - ``full`` (default): blocks all trade actions (buy, sell, reverse, flatten).
+    - ``entry_only``: blocks only new-entry actions (buy, sell, reverse);
+      flatten is always allowed so you can exit a position.
+    """
 
     def __init__(self) -> None:
         self._last_check: datetime = datetime.min.replace(tzinfo=timezone.utc)
         self._cached_allowed = True
         self._cached_reason = ""
+        self.state: str = "_ok"  # "_ok" | "_time" | "_meeting"
 
-    def check(self) -> tuple[bool, str]:
+    def check(self, mode: str = "full") -> tuple[bool, str]:
         """Return (allowed, reason).
+
+        Args:
+            mode: ``"full"`` blocks all actions.  ``"entry_only"`` allows
+                  flatten (position exit) even when blocked.
 
         Re-checks at most once per second to avoid perf hit on every tick.
         """
         now_utc = datetime.now(timezone.utc)
         if (now_utc - self._last_check).total_seconds() < 1.0:
+            if mode == "entry_only" and self.state == "_meeting":
+                # Flatten is always OK in entry_only mode
+                return True, ""
             return self._cached_allowed, self._cached_reason
 
         self._last_check = now_utc
@@ -154,14 +168,20 @@ class TradingGuard:
             reason = f"Trading disabled until {TRADING_START_ET.strftime('%H:%M')} ET (now {et})"
             self._cached_allowed = False
             self._cached_reason = reason
+            self.state = "_time"
             return False, reason
 
         soon, msg = meeting_soon()
         if soon:
             self._cached_allowed = False
             self._cached_reason = msg
+            self.state = "_meeting"
+            # In entry_only mode, flatten is always allowed
+            if mode == "entry_only":
+                return True, ""
             return False, msg
 
         self._cached_allowed = True
         self._cached_reason = ""
+        self.state = "_ok"
         return True, ""

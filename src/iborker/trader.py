@@ -514,11 +514,15 @@ class ClickTrader:
         """Check trading guard. Returns True if trading is allowed.
 
         Disables/enables trade buttons and updates status if blocked.
-        """
-        allowed, reason = self._guard.check()
 
-        trade_btns = ["buy_btn", "sell_btn", "reverse_btn", "flatten_btn"]
-        for btn in trade_btns:
+        Flatten is always allowed during meeting buffer (entry_only mode)
+        so you can exit a position, but blocked during the time gate.
+        """
+        allowed, reason = self._guard.check("full")
+        flatten_allowed, flatten_reason = self._guard.check("entry_only")
+
+        entry_btns = ["buy_btn", "sell_btn", "reverse_btn"]
+        for btn in entry_btns:
             if dpg.does_item_exist(btn):
                 if allowed:
                     dpg.configure_item(btn, disabled=False)
@@ -531,8 +535,19 @@ class ClickTrader:
                     dpg.configure_item(btn, disabled=True)
                     dpg.bind_item_theme(btn, self._disabled_theme)
 
+        # Flatten: allowed during meeting buffer, blocked during time gate
+        if dpg.does_item_exist("flatten_btn"):
+            if flatten_allowed:
+                dpg.configure_item("flatten_btn", disabled=False)
+            else:
+                dpg.configure_item("flatten_btn", disabled=True)
+                dpg.bind_item_theme("flatten_btn", self._disabled_theme)
+
+        # Status bar: show the most restrictive reason
         if not allowed and dpg.does_item_exist("status_text"):
             dpg.set_value("status_text", reason)
+        elif not flatten_allowed and flatten_reason and dpg.does_item_exist("status_text"):
+            dpg.set_value("status_text", flatten_reason)
 
         return allowed
 
@@ -631,8 +646,14 @@ class ClickTrader:
         self._run_async(self.reverse())
 
     def _on_flatten_click(self) -> None:
-        """Handle flatten button click."""
-        if not self._check_and_apply_guard():
+        """Handle flatten button click.
+
+        Flatten is always allowed during meeting buffer (entry_only mode)
+        but blocked during the time gate.
+        """
+        allowed, _ = self._guard.check("entry_only")
+        if not allowed:
+            self._check_and_apply_guard()  # update UI status
             return
         self._run_async(self.flatten())
 
@@ -715,7 +736,14 @@ class ClickTrader:
         if not action:
             return
 
-        if not self._check_and_apply_guard():
+        # Flatten is allowed during meeting buffer; entry actions are not
+        if action == "flatten":
+            allowed, _ = self._guard.check("entry_only")
+        else:
+            allowed, _ = self._guard.check("full")
+
+        if not allowed:
+            self._check_and_apply_guard()
             return
 
         # Clear highlight BEFORE executing to prevent double-execution
