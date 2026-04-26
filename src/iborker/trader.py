@@ -16,6 +16,7 @@ from iborker.client_id import get_client_id, release_client_id
 from iborker.config import settings
 from iborker.contracts import FUTURES_DATABASE, resolve_symbol
 from iborker.roll import RollState, get_roll_status
+from iborker.trading_guard import TradingGuard
 
 
 @dataclass
@@ -66,6 +67,9 @@ class ClickTrader:
         self._buy_theme: int = 0
         self._sell_theme: int = 0
         self._highlight_theme: int = 0
+        self._disabled_theme: int = 0
+        # Trading guard
+        self._guard = TradingGuard()
 
     def _run_async(self, coro: Callable) -> None:
         """Run coroutine in the background event loop (fire and forget)."""
@@ -417,6 +421,9 @@ class ClickTrader:
 
     def _update_display(self) -> None:
         """Update position, price, and PnL display."""
+        # Re-check guard on every display update (buttons re-enable when time comes)
+        self._check_and_apply_guard()
+
         # Position display
         if dpg.does_item_exist("position_text"):
             pos_str = f"{self.state.position:+d}" if self.state.position else "FLAT"
@@ -503,6 +510,32 @@ class ClickTrader:
             self.state.pnl_mode = "points"
         self._update_pnl_display()
 
+    def _check_and_apply_guard(self) -> bool:
+        """Check trading guard. Returns True if trading is allowed.
+
+        Disables/enables trade buttons and updates status if blocked.
+        """
+        allowed, reason = self._guard.check()
+
+        trade_btns = ["buy_btn", "sell_btn", "reverse_btn", "flatten_btn"]
+        for btn in trade_btns:
+            if dpg.does_item_exist(btn):
+                if allowed:
+                    dpg.configure_item(btn, disabled=False)
+                    # Restore original themes
+                    if btn == "buy_btn":
+                        dpg.bind_item_theme(btn, self._buy_theme)
+                    elif btn == "sell_btn":
+                        dpg.bind_item_theme(btn, self._sell_theme)
+                else:
+                    dpg.configure_item(btn, disabled=True)
+                    dpg.bind_item_theme(btn, self._disabled_theme)
+
+        if not allowed and dpg.does_item_exist("status_text"):
+            dpg.set_value("status_text", reason)
+
+        return allowed
+
     def _on_quantity_change(self, sender, value) -> None:
         """Handle quantity input change."""
         self.state.quantity = max(1, int(value))
@@ -581,18 +614,26 @@ class ClickTrader:
 
     def _on_buy_click(self) -> None:
         """Handle buy button click."""
+        if not self._check_and_apply_guard():
+            return
         self._run_async(self.buy())
 
     def _on_sell_click(self) -> None:
         """Handle sell button click."""
+        if not self._check_and_apply_guard():
+            return
         self._run_async(self.sell())
 
     def _on_reverse_click(self) -> None:
         """Handle reverse button click."""
+        if not self._check_and_apply_guard():
+            return
         self._run_async(self.reverse())
 
     def _on_flatten_click(self) -> None:
         """Handle flatten button click."""
+        if not self._check_and_apply_guard():
+            return
         self._run_async(self.flatten())
 
     def _on_key_press(self, sender, app_data) -> None:
@@ -672,6 +713,9 @@ class ClickTrader:
         """Execute the currently highlighted action."""
         action = self.state.highlighted_action
         if not action:
+            return
+
+        if not self._check_and_apply_guard():
             return
 
         # Clear highlight BEFORE executing to prevent double-execution
@@ -858,6 +902,16 @@ class ClickTrader:
                 dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, (255, 255, 0))
                 dpg.add_theme_style(dpg.mvStyleVar_FrameBorderSize, 2)
         self._highlight_theme = highlight_theme
+
+        # Disabled/guarded theme -- dim gray
+        with dpg.theme() as disabled_theme:
+            with dpg.theme_component(dpg.mvButton):
+                dpg.add_theme_color(dpg.mvThemeCol_Button, (60, 60, 60))
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, (80, 80, 80))
+        self._disabled_theme = disabled_theme
+
+        # Initial guard check (disables buttons if outside trading window)
+        self._check_and_apply_guard()
 
         # Register keyboard handler
         with dpg.handler_registry():
