@@ -527,22 +527,22 @@ class ClickTrader:
         for btn in entry_btns:
             if dpg.does_item_exist(btn):
                 if allowed:
-                    dpg.configure_item(btn, disabled=False)
+                    dpg.enable_item(btn)
                     # Restore original themes
                     if btn == "buy_btn":
                         dpg.bind_item_theme(btn, self._buy_theme)
                     elif btn == "sell_btn":
                         dpg.bind_item_theme(btn, self._sell_theme)
                 else:
-                    dpg.configure_item(btn, disabled=True)
+                    dpg.disable_item(btn)
                     dpg.bind_item_theme(btn, self._disabled_theme)
 
         # Flatten: allowed during meeting buffer, blocked during time gate
         if dpg.does_item_exist("flatten_btn"):
             if flatten_allowed:
-                dpg.configure_item("flatten_btn", disabled=False)
+                dpg.enable_item("flatten_btn")
             else:
-                dpg.configure_item("flatten_btn", disabled=True)
+                dpg.disable_item("flatten_btn")
                 dpg.bind_item_theme("flatten_btn", self._disabled_theme)
 
         # Status bar: show the most restrictive reason
