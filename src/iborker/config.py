@@ -27,5 +27,32 @@ class IBSettings(BaseSettings):
     # Account nicknames: {"U1234567": "IRA", "U7654321": "Main"}
     account_nicknames: dict[str, str] = {}
 
+    # Guardrails mode (only required when --guardrails-on is passed)
+    daily_goal: float | None = None
+    loss_cooldown_threshold: float | None = None
+    loss_cooldown_seconds: int | None = None
+    rearm_cooldown_seconds: int | None = None
+    clock_in_countdown_minutes: int = 15
+
+    @classmethod
+    def guardrails_required(cls, settings: "IBSettings | None" = None) -> list[str]:
+        """Return env-var names required for guardrails mode that are unset.
+
+        Defaults to a freshly-loaded settings instance.  Tests can pass an
+        instance constructed with ``_env_file=None`` to skip the project
+        ``.env`` file.
+        """
+        s = settings if settings is not None else cls()
+        missing: list[str] = []
+        if s.daily_goal is None:
+            missing.append("IB_DAILY_GOAL")
+        if s.loss_cooldown_threshold is None:
+            missing.append("IB_LOSS_COOLDOWN_THRESHOLD")
+        if s.loss_cooldown_seconds is None:
+            missing.append("IB_LOSS_COOLDOWN_SECONDS")
+        if s.rearm_cooldown_seconds is None:
+            missing.append("IB_REARM_COOLDOWN_SECONDS")
+        return missing
+
 
 settings = IBSettings()

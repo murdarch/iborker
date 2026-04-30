@@ -70,6 +70,41 @@ iborker-trader
 | Ctrl+Enter | Execute highlighted action |
 | P | Toggle points/dollars P&L |
 
+**CLI flags:**
+- `--no-roll-check` — skip the futures-roll lookup when setting a contract
+- `--no-reverse` — remove the REVERSE button (forces enter–exit discipline)
+- `--guardrails-on` — discipline mode (see below)
+
+#### Guardrails mode
+
+`iborker-trader --guardrails-on` enforces a pre-trade checklist, no-pyramid lock,
+loss cooldowns, and a typed-reason gate for trading past your daily goal. Useful
+if you have specific overtrading patterns to break.
+
+Required env vars (trader exits at startup with a list of any missing):
+
+| Var | Meaning |
+|-----|---------|
+| `IB_DAILY_GOAL` | Daily session goal in points; once cumulative ≥ goal, trade buttons disable until you re-arm with a typed reason |
+| `IB_LOSS_COOLDOWN_THRESHOLD` | Per-trade realized loss (points) above which a cooldown triggers |
+| `IB_LOSS_COOLDOWN_SECONDS` | Length of the loss cooldown |
+| `IB_REARM_COOLDOWN_SECONDS` | Length of the post-re-arm cooldown |
+| `IB_CLOCK_IN_COUNTDOWN_MINUTES` | (optional, default 15) length of the clock-in countdown |
+
+Lifecycle (per session):
+
+1. **Clock In** — all trade buttons disabled until you click *Clock In*. A countdown then runs.
+2. **Checklist** — three free-text questions (≥20 chars each, tab-navigable) you have to answer.
+3. **Arm prompt** — explicit yes/no to enable trading.
+4. **Armed** — BUY / SELL / FLATTEN enabled. REVERSE is hidden in this mode.
+5. **In position** — BUY and SELL disable; only FLATTEN exits.
+6. **Cooldown** — a realized loss > threshold disables all trade buttons for the cooldown duration.
+7. **Goal hit** — when cumulative points ≥ `IB_DAILY_GOAL`, trade buttons disable and a *Re-arm* button appears. Click it, type a reason, then wait out `IB_REARM_COOLDOWN_SECONDS`.
+8. **Disconnect** resets the lifecycle to clocked-out — no persisted state across reconnects.
+
+Clock-in time, checklist responses, and re-arm reasons are appended to
+`workspace/journal/YYYY-MM-DD.md` (gitignored).
+
 ### Historical Data
 
 Download OHLCV data for futures contracts.

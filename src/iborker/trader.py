@@ -11,10 +11,15 @@ from pathlib import Path
 import dearpygui.dearpygui as dpg
 from ib_insync import IB, Contract, Future, MarketOrder, Position, Ticker
 
-from iborker import __version__
+from iborker import __version__, journal
 from iborker.client_id import get_client_id, release_client_id
 from iborker.config import settings
 from iborker.contracts import FUTURES_DATABASE, resolve_symbol
+from iborker.guardrails import (
+    CHECKLIST_QUESTIONS,
+    GuardrailsLifecycle,
+    GuardrailsState,
+)
 from iborker.roll import RollState, get_roll_status
 from iborker.trading_guard import TradingGuard
 
@@ -72,6 +77,8 @@ class ClickTrader:
         self._guard = TradingGuard()
         # UI options
         self.no_reverse: bool = False
+        # Guardrails lifecycle (set externally before run() when --guardrails-on)
+        self.lifecycle: GuardrailsLifecycle | None = None
 
     def _run_async(self, coro: Callable) -> None:
         """Run coroutine in the background event loop (fire and forget)."""
@@ -149,6 +156,9 @@ class ClickTrader:
             self._update_status("Disconnected")
             if dpg.does_item_exist("connect_btn"):
                 dpg.configure_item("connect_btn", label="Connect")
+        # Guardrails: any disconnect resets the lifecycle to clocked-out
+        if self.lifecycle is not None:
+            self.lifecycle.clock_out()
 
     async def _resolve_contract(self, symbol: str, exchange: str) -> Contract | None:
         """Resolve symbol to a specific contract.
@@ -309,9 +319,18 @@ class ClickTrader:
             self._update_status(f"Filled: {action} {quantity} @ {fill_price}")
 
             # Calculate realized P&L (per-contract) for closed portion
-            self._calculate_realized_pnl(
+            realized = self._calculate_realized_pnl(
                 prev_position, prev_avg_cost, action, quantity, fill_price
             )
+
+            # Notify guardrails lifecycle (entry vs close)
+            if self.lifecycle is not None:
+                if prev_position == 0:
+                    self.lifecycle.register_entry()
+                elif quantity == abs(prev_position):
+                    self.lifecycle.register_close(
+                        realized, self.state.daily_realized_points
+                    )
         else:
             self._update_status(f"Order status: {trade.orderStatus.status}")
 
@@ -373,21 +392,26 @@ class ClickTrader:
         action: str,
         quantity: int,
         fill_price: float,
-    ) -> None:
-        """Calculate and accumulate realized P&L (per-contract) for closed portion."""
+    ) -> float:
+        """Calculate and accumulate realized P&L (per-contract) for closed portion.
+
+        Returns the realized points for this fill (0.0 if no realization).
+        """
         if prev_position == 0:
             # Opening new position, no realized P&L
-            return
+            return 0.0
 
-        # Calculate per-contract realized P&L for closed portion
         if prev_position > 0 and action == "SELL":
             # Closing long: realized = exit - entry
             realized_points = fill_price - prev_avg_cost
             self.state.daily_realized_points += realized_points
-        elif prev_position < 0 and action == "BUY":
+            return realized_points
+        if prev_position < 0 and action == "BUY":
             # Closing short: realized = entry - exit
             realized_points = prev_avg_cost - fill_price
             self.state.daily_realized_points += realized_points
+            return realized_points
+        return 0.0
 
     def _on_tick(self, tickers: set[Ticker]) -> None:
         """Handle tick updates for market data."""
@@ -513,15 +537,21 @@ class ClickTrader:
         self._update_pnl_display()
 
     def _check_and_apply_guard(self) -> bool:
-        """Check trading guard. Returns True if trading is allowed.
+        """Check trading guard + guardrails lifecycle. Returns True if entries allowed.
 
-        Disables/enables trade buttons and updates status if blocked.
-
-        Flatten is always allowed during meeting buffer (entry_only mode)
-        so you can exit a position, but blocked during the time gate.
+        Composes the existing TradingGuard (time/meeting) with the optional
+        guardrails lifecycle (clock-in/checklist/cooldowns).  An entry is
+        allowed only when both pass; flatten requires the lifecycle to be
+        in IN_POSITION when guardrails are active.
         """
         allowed, reason = self._guard.check("full")
         flatten_allowed, flatten_reason = self._guard.check("entry_only")
+
+        # Layer guardrails lifecycle on top
+        if self.lifecycle is not None:
+            self.lifecycle.tick()
+            allowed = allowed and self.lifecycle.entry_buttons_enabled
+            flatten_allowed = flatten_allowed and self.lifecycle.flatten_enabled
 
         entry_btns = ["buy_btn", "sell_btn", "reverse_btn"]
         for btn in entry_btns:
@@ -537,7 +567,6 @@ class ClickTrader:
                     dpg.disable_item(btn)
                     dpg.bind_item_theme(btn, self._disabled_theme)
 
-        # Flatten: allowed during meeting buffer, blocked during time gate
         if dpg.does_item_exist("flatten_btn"):
             if flatten_allowed:
                 dpg.enable_item("flatten_btn")
@@ -548,10 +577,224 @@ class ClickTrader:
         # Status bar: show the most restrictive reason
         if not allowed and dpg.does_item_exist("status_text"):
             dpg.set_value("status_text", reason)
-        elif not flatten_allowed and flatten_reason and dpg.does_item_exist("status_text"):
+        elif (
+            not flatten_allowed
+            and flatten_reason
+            and dpg.does_item_exist("status_text")
+        ):
             dpg.set_value("status_text", flatten_reason)
 
+        # Sync guardrails-specific UI (clock-in button, modals, countdown)
+        if self.lifecycle is not None:
+            self._apply_guardrails_state()
+
         return allowed
+
+    def _apply_guardrails_state(self) -> None:
+        """Sync guardrails UI elements to current lifecycle state."""
+        lc = self.lifecycle
+        if lc is None:
+            return
+
+        # Clock-in button
+        if dpg.does_item_exist("clock_in_btn"):
+            dpg.configure_item("clock_in_btn", show=lc.show_clock_in_button)
+
+        # Re-arm button
+        if dpg.does_item_exist("rearm_btn"):
+            dpg.configure_item("rearm_btn", show=lc.show_rearm_button)
+
+        # Lifecycle status text (state + countdown)
+        if dpg.does_item_exist("guard_status_text"):
+            label = self._lifecycle_label()
+            dpg.set_value("guard_status_text", label)
+
+        # Modals
+        if dpg.does_item_exist("guard_checklist_modal"):
+            dpg.configure_item(
+                "guard_checklist_modal",
+                show=lc.state == GuardrailsState.CHECKLIST,
+            )
+        if dpg.does_item_exist("guard_arm_modal"):
+            dpg.configure_item(
+                "guard_arm_modal",
+                show=lc.state == GuardrailsState.ARM_PROMPT,
+            )
+        if dpg.does_item_exist("guard_rearm_modal"):
+            dpg.configure_item(
+                "guard_rearm_modal",
+                show=lc.state == GuardrailsState.REARM_PROMPT,
+            )
+
+    def _lifecycle_label(self) -> str:
+        """Human-readable lifecycle status, including any timer remaining."""
+        lc = self.lifecycle
+        if lc is None:
+            return ""
+        s = lc.state
+        if s in (
+            GuardrailsState.COUNTDOWN,
+            GuardrailsState.LOSS_COOLDOWN,
+            GuardrailsState.REARM_COOLDOWN,
+        ):
+            secs = int(lc.remaining_seconds())
+            mm, ss = divmod(secs, 60)
+            return f"{s.value.upper()} {mm:d}:{ss:02d}"
+        return s.value.upper()
+
+    # ── Guardrails modal builders ────────────────────────────────────────
+
+    def _build_guardrails_modals(self) -> None:
+        """Build the three guardrails modal windows (hidden initially)."""
+        # Pre-trade checklist modal
+        with dpg.window(
+            label="Pre-Trade Checklist",
+            tag="guard_checklist_modal",
+            modal=True,
+            show=False,
+            no_close=True,
+            width=520,
+            height=480,
+        ):
+            dpg.add_text(
+                "Type a substantive answer to each (>=20 chars). Tab between fields.",
+                color=(200, 200, 100),
+            )
+            dpg.add_separator()
+            for i, q in enumerate(CHECKLIST_QUESTIONS):
+                dpg.add_text(q)
+                dpg.add_input_text(
+                    tag=f"guard_checklist_input_{i}",
+                    multiline=True,
+                    width=-1,
+                    height=70,
+                    tab_input=False,
+                )
+                dpg.add_spacer(height=4)
+            dpg.add_text("", tag="guard_checklist_error", color=(255, 100, 100))
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Submit", callback=self._on_checklist_submit)
+                dpg.add_button(label="Cancel", callback=self._on_checklist_cancel)
+
+        # Arm prompt modal
+        with dpg.window(
+            label="Arm iborker?",
+            tag="guard_arm_modal",
+            modal=True,
+            show=False,
+            no_close=True,
+            width=320,
+            height=140,
+        ):
+            dpg.add_text("Arm iborker for trading?")
+            dpg.add_spacer(height=10)
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Yes", width=100, callback=self._on_arm_yes)
+                dpg.add_button(label="No", width=100, callback=self._on_arm_no)
+
+        # Re-arm reason modal
+        with dpg.window(
+            label="Re-arm reason",
+            tag="guard_rearm_modal",
+            modal=True,
+            show=False,
+            no_close=True,
+            width=480,
+            height=260,
+        ):
+            dpg.add_text(
+                "Daily goal hit. Why are you continuing? (>=20 chars)",
+                color=(200, 200, 100),
+            )
+            dpg.add_input_text(
+                tag="guard_rearm_input",
+                multiline=True,
+                width=-1,
+                height=120,
+                tab_input=False,
+            )
+            dpg.add_text("", tag="guard_rearm_error", color=(255, 100, 100))
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Submit", callback=self._on_rearm_submit)
+                dpg.add_button(label="Cancel", callback=self._on_rearm_cancel)
+
+    # ── Guardrails callbacks ──────────────────────────────────────────────
+
+    def _on_clock_in_click(self) -> None:
+        if self.lifecycle is None:
+            return
+        if self.lifecycle.clock_in():
+            journal.append_clock_in()
+            self._apply_guardrails_state()
+
+    def _on_checklist_submit(self) -> None:
+        if self.lifecycle is None:
+            return
+        answers = tuple(
+            dpg.get_value(f"guard_checklist_input_{i}")
+            for i in range(len(CHECKLIST_QUESTIONS))
+        )
+        ok, reason = self.lifecycle.submit_checklist(answers)
+        if ok:
+            journal.append_checklist(self.lifecycle.last_checklist, CHECKLIST_QUESTIONS)
+            # Clear inputs so a future re-open is fresh
+            for i in range(len(CHECKLIST_QUESTIONS)):
+                dpg.set_value(f"guard_checklist_input_{i}", "")
+            dpg.set_value("guard_checklist_error", "")
+            self._apply_guardrails_state()
+        else:
+            dpg.set_value("guard_checklist_error", reason)
+
+    def _on_checklist_cancel(self) -> None:
+        if self.lifecycle is None:
+            return
+        self.lifecycle.cancel()
+        for i in range(len(CHECKLIST_QUESTIONS)):
+            dpg.set_value(f"guard_checklist_input_{i}", "")
+        dpg.set_value("guard_checklist_error", "")
+        self._apply_guardrails_state()
+
+    def _on_arm_yes(self) -> None:
+        if self.lifecycle is None:
+            return
+        self.lifecycle.arm()
+        self._apply_guardrails_state()
+
+    def _on_arm_no(self) -> None:
+        if self.lifecycle is None:
+            return
+        self.lifecycle.cancel()
+        self._apply_guardrails_state()
+
+    def _on_rearm_click(self) -> None:
+        """Open the re-arm reason modal from the GOAL_HIT button."""
+        if self.lifecycle is None:
+            return
+        self.lifecycle.open_rearm_prompt()
+        self._apply_guardrails_state()
+
+    def _on_rearm_submit(self) -> None:
+        if self.lifecycle is None:
+            return
+        reason = dpg.get_value("guard_rearm_input")
+        ok, msg = self.lifecycle.request_rearm(reason)
+        if ok:
+            journal.append_rearm(self.lifecycle.last_rearm_reason)
+            dpg.set_value("guard_rearm_input", "")
+            dpg.set_value("guard_rearm_error", "")
+            self._apply_guardrails_state()
+        else:
+            dpg.set_value("guard_rearm_error", msg)
+
+    def _on_rearm_cancel(self) -> None:
+        """Cancel the re-arm modal -- returns to GOAL_HIT (re-arm button stays)."""
+        if self.lifecycle is None:
+            return
+        # Bump back to GOAL_HIT manually since cancel() goes to CLOCKED_OUT
+        self.lifecycle.state = GuardrailsState.GOAL_HIT
+        dpg.set_value("guard_rearm_input", "")
+        dpg.set_value("guard_rearm_error", "")
+        self._apply_guardrails_state()
 
     def _on_quantity_change(self, sender, value) -> None:
         """Handle quantity input change."""
@@ -661,6 +904,15 @@ class ClickTrader:
 
     def _on_key_press(self, sender, app_data) -> None:
         """Handle keyboard shortcuts."""
+        # Don't intercept while a guardrails modal is open -- typed text in
+        # the checklist / re-arm fields must not be hijacked by B/S/F/R/Q/P.
+        if self.lifecycle is not None and self.lifecycle.state in (
+            GuardrailsState.CHECKLIST,
+            GuardrailsState.ARM_PROMPT,
+            GuardrailsState.REARM_PROMPT,
+        ):
+            return
+
         key_code = app_data  # DearPyGui passes key code in app_data
 
         # DearPyGui key constants
@@ -776,6 +1028,26 @@ class ClickTrader:
                     width=100,
                 )
                 dpg.add_text("Disconnected", tag="status_text")
+
+            # Guardrails: lifecycle status + clock-in/re-arm buttons
+            if self.lifecycle is not None:
+                with dpg.group(horizontal=True):
+                    dpg.add_text("Guardrails:", color=(180, 180, 100))
+                    dpg.add_text("CLOCKED_OUT", tag="guard_status_text")
+                with dpg.group(horizontal=True):
+                    dpg.add_button(
+                        label="Clock In",
+                        tag="clock_in_btn",
+                        callback=self._on_clock_in_click,
+                        width=100,
+                    )
+                    dpg.add_button(
+                        label="Re-arm",
+                        tag="rearm_btn",
+                        callback=self._on_rearm_click,
+                        width=100,
+                        show=False,
+                    )
 
             # Account selection (populated after connect)
             with dpg.group(horizontal=True):
@@ -906,6 +1178,10 @@ class ClickTrader:
                     small=True,
                 )
 
+        # ── Guardrails modals ──────────────────────────────────────────
+        if self.lifecycle is not None:
+            self._build_guardrails_modals()
+
         # Link theme (no background, looks like hyperlink)
         with dpg.theme(tag="_link_theme"):
             with dpg.theme_component(dpg.mvButton):
@@ -977,7 +1253,14 @@ class ClickTrader:
         dpg.show_viewport()
 
         try:
-            dpg.start_dearpygui()
+            if self.lifecycle is not None:
+                # Manual render loop so countdowns / cooldowns tick every frame
+                # regardless of whether market data is flowing.
+                while dpg.is_dearpygui_running():
+                    self._check_and_apply_guard()
+                    dpg.render_dearpygui_frame()
+            else:
+                dpg.start_dearpygui()
         finally:
             # Cleanup - disconnect if connected, then stop event loop
             if self.ib is not None:
@@ -986,25 +1269,43 @@ class ClickTrader:
             dpg.destroy_context()
 
 
-def main(no_roll_check: bool = False, no_reverse: bool = False) -> None:
+def main(
+    no_roll_check: bool = False,
+    no_reverse: bool = False,
+    guardrails_on: bool = False,
+) -> None:
     """Entry point for click trader.
 
     Args:
         no_roll_check: Disable automatic roll detection when selecting contracts.
         no_reverse:  Remove the REVERSE button and keyboard shortcut.  Forces
                      enter-exit discipline instead of reverse-reverse-reverse.
+        guardrails_on: Enable guardrails mode (clock-in, checklist, cooldowns,
+                     goal-hit re-arm).  Implies no_reverse.
     """
     trader = ClickTrader()
     if no_roll_check:
         trader.state.roll_check_enabled = False
-    if no_reverse:
+    if no_reverse or guardrails_on:
         trader.no_reverse = True
+    if guardrails_on:
+        from iborker.guardrails import GuardrailsConfig, GuardrailsLifecycle
+
+        cfg = GuardrailsConfig(
+            daily_goal=settings.daily_goal,  # validated non-None by cli()
+            loss_cooldown_threshold=settings.loss_cooldown_threshold,
+            loss_cooldown_seconds=settings.loss_cooldown_seconds,
+            rearm_cooldown_seconds=settings.rearm_cooldown_seconds,
+            clock_in_countdown_minutes=settings.clock_in_countdown_minutes,
+        )
+        trader.lifecycle = GuardrailsLifecycle(config=cfg)
     trader.run()
 
 
 def cli() -> None:
     """CLI entry point with argument parsing."""
     import argparse
+    import sys
 
     parser = argparse.ArgumentParser(
         description="iborker Click Trader - Simple futures trading GUI"
@@ -1019,8 +1320,36 @@ def cli() -> None:
         action="store_true",
         help="Remove the REVERSE button (forces enter-exit discipline)",
     )
+    parser.add_argument(
+        "--guardrails-on",
+        action="store_true",
+        help=(
+            "Enable guardrails mode: clock-in countdown, pre-trade checklist, "
+            "loss cooldown, daily-goal re-arm, no-pyramid lock.  Requires "
+            "IB_DAILY_GOAL, IB_LOSS_COOLDOWN_THRESHOLD, IB_LOSS_COOLDOWN_SECONDS, "
+            "IB_REARM_COOLDOWN_SECONDS env vars."
+        ),
+    )
     args = parser.parse_args()
-    main(no_roll_check=args.no_roll_check, no_reverse=args.no_reverse)
+
+    if args.guardrails_on:
+        from iborker.config import IBSettings
+
+        missing = IBSettings.guardrails_required()
+        if missing:
+            print(
+                "error: --guardrails-on requires the following env vars to be set:",
+                file=sys.stderr,
+            )
+            for name in missing:
+                print(f"  - {name}", file=sys.stderr)
+            sys.exit(2)
+
+    main(
+        no_roll_check=args.no_roll_check,
+        no_reverse=args.no_reverse,
+        guardrails_on=args.guardrails_on,
+    )
 
 
 if __name__ == "__main__":

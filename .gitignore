@@ -10,3 +10,6 @@ wheels/
 .venv
 .env
 *.csv
+
+# Local workspace (research data, journals, etc.)
+workspace/
