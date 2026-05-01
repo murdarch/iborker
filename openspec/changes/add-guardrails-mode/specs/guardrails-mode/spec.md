@@ -1,3 +1,29 @@
+## MODIFIED Requirements
+
+### Requirement: Required Configuration Validation
+
+When `--guardrails-on` is set, the trader SHALL validate that required environment variables are present *before* the GUI launches and SHALL exit with a non-zero status and a clear error if any are missing.
+
+Required env vars:
+- `IB_DAILY_GOAL` (float, points)
+- `IB_LOSS_COOLDOWN_THRESHOLD` (float, points)
+- `IB_LOSS_COOLDOWN_SECONDS` (int)
+- `IB_REARM_COOLDOWN_SECONDS` (int)
+- `IB_TRADE_COOLDOWN_SECONDS` (int)
+- `IB_MAX_ROUND_TRIPS` (int)
+
+Optional env var with default:
+- `IB_CLOCK_IN_COUNTDOWN_MINUTES` (int, default `15`)
+
+#### Scenario: Missing required vars
+- **WHEN** `--guardrails-on` is set and `IB_DAILY_GOAL` is unset
+- **THEN** the process exits with non-zero status before the GUI is created
+- **AND** stderr lists every missing required env var by name
+
+#### Scenario: All required vars present
+- **WHEN** `--guardrails-on` is set and all required env vars are present
+- **THEN** the trader launches normally and enters `CLOCKED_OUT`
+
 ## ADDED Requirements
 
 ### Requirement: Guardrails Mode Activation
@@ -15,28 +41,6 @@ The click trader SHALL accept a `--guardrails-on` CLI flag that activates a sess
 - **AND** all trade buttons (BUY, SELL, FLATTEN) are disabled
 - **AND** a "Clock In" button is visible
 - **AND** the REVERSE button is not rendered, regardless of `--no-reverse`
-
-### Requirement: Required Configuration Validation
-
-When `--guardrails-on` is set, the trader SHALL validate that required environment variables are present *before* the GUI launches and SHALL exit with a non-zero status and a clear error if any are missing.
-
-Required env vars:
-- `IB_DAILY_GOAL` (float, points)
-- `IB_LOSS_COOLDOWN_THRESHOLD` (float, points)
-- `IB_LOSS_COOLDOWN_SECONDS` (int)
-- `IB_REARM_COOLDOWN_SECONDS` (int)
-
-Optional env var with default:
-- `IB_CLOCK_IN_COUNTDOWN_MINUTES` (int, default `15`)
-
-#### Scenario: Missing required vars
-- **WHEN** `--guardrails-on` is set and `IB_DAILY_GOAL` is unset
-- **THEN** the process exits with non-zero status before the GUI is created
-- **AND** stderr lists every missing required env var by name
-
-#### Scenario: All required vars present
-- **WHEN** `--guardrails-on` is set and all required env vars are present
-- **THEN** the trader launches normally and enters `CLOCKED_OUT`
 
 ### Requirement: Clock-In Countdown
 
@@ -162,3 +166,49 @@ When `--guardrails-on` is active, the trader SHALL append events to `workspace/j
 #### Scenario: Re-arm reason submitted
 - **WHEN** the user submits a re-arm reason
 - **THEN** the journal file for today contains a timestamped entry with the reason verbatim
+
+### Requirement: Per-Trade Cooldown
+
+When a close transitions position from non-zero to zero and does not trigger LOSS_COOLDOWN, GOAL_HIT, or MAX_TRADES_HIT, the trader SHALL disable all trade buttons for `IB_TRADE_COOLDOWN_SECONDS` seconds before returning to `ARMED`. The per-trade cooldown is mutually exclusive with the loss cooldown — a single close triggers exactly one of them.
+
+#### Scenario: Win triggers per-trade cooldown
+- **GIVEN** `IB_TRADE_COOLDOWN_SECONDS = 30`
+- **WHEN** a close realizes +0.5 pts (no other lockout fires)
+- **THEN** the lifecycle transitions to `TRADE_COOLDOWN`
+- **AND** trade buttons are disabled
+- **AND** after 30 seconds the lifecycle transitions to `ARMED`
+
+#### Scenario: Small loss triggers per-trade cooldown
+- **GIVEN** `IB_LOSS_COOLDOWN_THRESHOLD = 0.5` and `IB_TRADE_COOLDOWN_SECONDS = 30`
+- **WHEN** a close realizes −0.25 pts
+- **THEN** the lifecycle transitions to `TRADE_COOLDOWN` (not `LOSS_COOLDOWN`)
+- **AND** trade buttons are disabled until the trade cooldown elapses
+
+#### Scenario: Big loss takes precedence
+- **GIVEN** `IB_LOSS_COOLDOWN_THRESHOLD = 0.5`
+- **WHEN** a close realizes −1.0 pts
+- **THEN** the lifecycle transitions to `LOSS_COOLDOWN` (not `TRADE_COOLDOWN`)
+
+### Requirement: Max Round Trips Terminal Lockout
+
+The trader SHALL count round trips (entry-to-flat cycles) per session. When the count reaches `IB_MAX_ROUND_TRIPS`, the lifecycle SHALL enter `MAX_TRADES_HIT` and remain there until clock-out (disconnect / next session). The lockout is terminal — no re-arm path, no typed-reason override.
+
+The round-trip counter SHALL reset on `clock_out()` and on `clock_in()`.
+
+#### Scenario: Max trips reached
+- **GIVEN** `IB_MAX_ROUND_TRIPS = 3` and 2 round trips already taken
+- **WHEN** the third round trip closes
+- **THEN** the lifecycle transitions to `MAX_TRADES_HIT`
+- **AND** trade buttons are disabled
+- **AND** no Re-arm button is shown
+
+#### Scenario: Max trips precedence over other cooldowns
+- **GIVEN** the close that completes the max trip would otherwise be a big loss
+- **WHEN** round trips reach `IB_MAX_ROUND_TRIPS`
+- **THEN** the lifecycle is `MAX_TRADES_HIT` (not `LOSS_COOLDOWN`)
+
+#### Scenario: Counter resets on clock-out
+- **GIVEN** the lifecycle is `MAX_TRADES_HIT` after 3 round trips
+- **WHEN** the user disconnects (or `clock_out()` is invoked)
+- **THEN** the lifecycle returns to `CLOCKED_OUT`
+- **AND** the round-trip counter is `0`

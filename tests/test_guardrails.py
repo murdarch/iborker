@@ -23,6 +23,8 @@ def _config(
     loss_threshold: float = 0.5,
     loss_seconds: int = 120,
     rearm_seconds: int = 300,
+    trade_cooldown_seconds: int = 30,
+    max_round_trips: int = 999,
     countdown_minutes: int = 15,
 ) -> GuardrailsConfig:
     return GuardrailsConfig(
@@ -30,6 +32,8 @@ def _config(
         loss_cooldown_threshold=loss_threshold,
         loss_cooldown_seconds=loss_seconds,
         rearm_cooldown_seconds=rearm_seconds,
+        trade_cooldown_seconds=trade_cooldown_seconds,
+        max_round_trips=max_round_trips,
         clock_in_countdown_minutes=countdown_minutes,
     )
 
@@ -105,13 +109,14 @@ def test_register_entry_moves_to_in_position():
     assert lc.state == GuardrailsState.IN_POSITION
 
 
-def test_register_close_winner_returns_to_armed():
-    lc = GuardrailsLifecycle(config=_config(daily_goal=10.0))
+def test_register_close_winner_enters_trade_cooldown():
+    lc = GuardrailsLifecycle(config=_config(daily_goal=10.0, trade_cooldown_seconds=30))
     _arm(lc)
     lc.register_entry()
-    # Profitable close, well under daily goal -> back to ARMED
+    # Profitable close, well under daily goal -> per-trade cooldown
     lc.register_close(realized_points=0.75, cumulative_points=0.75)
-    assert lc.state == GuardrailsState.ARMED
+    assert lc.state == GuardrailsState.TRADE_COOLDOWN
+    assert lc.remaining_seconds() > 0
 
 
 # ── Loss cooldown ─────────────────────────────────────────────────────────
@@ -126,12 +131,65 @@ def test_loss_exceeds_threshold_triggers_cooldown():
     assert lc.remaining_seconds() > 0
 
 
-def test_small_loss_does_not_trigger_cooldown():
+def test_small_loss_triggers_trade_cooldown_not_loss_cooldown():
     lc = GuardrailsLifecycle(config=_config(loss_threshold=0.5, daily_goal=10.0))
     _arm(lc)
     lc.register_entry()
     lc.register_close(realized_points=-0.25, cumulative_points=-0.25)
+    assert lc.state == GuardrailsState.TRADE_COOLDOWN
+
+
+def test_trade_cooldown_expires_to_armed():
+    lc = GuardrailsLifecycle(
+        config=_config(daily_goal=10.0, trade_cooldown_seconds=1)
+    )
+    _arm(lc)
+    lc.register_entry()
+    lc.register_close(realized_points=0.5, cumulative_points=0.5)
+    assert lc.state == GuardrailsState.TRADE_COOLDOWN
+    from datetime import datetime, timedelta
+
+    lc.deadline = datetime.now(UTC) - timedelta(seconds=1)
+    lc.tick()
     assert lc.state == GuardrailsState.ARMED
+
+
+# ── Max round trips ───────────────────────────────────────────────────────
+
+
+def test_max_trips_terminal_lockout():
+    lc = GuardrailsLifecycle(config=_config(daily_goal=100.0, max_round_trips=2))
+    _arm(lc)
+    lc.register_entry()
+    lc.register_close(realized_points=0.5, cumulative_points=0.5)
+    assert lc.state == GuardrailsState.TRADE_COOLDOWN
+    # Force back to ARMED to take the second trip
+    lc.state = GuardrailsState.ARMED
+    lc.deadline = None
+    lc.register_entry()
+    lc.register_close(realized_points=0.5, cumulative_points=1.0)
+    assert lc.state == GuardrailsState.MAX_TRADES_HIT
+    assert lc.round_trips == 2
+
+
+def test_max_trips_takes_precedence_over_loss_cooldown():
+    lc = GuardrailsLifecycle(config=_config(loss_threshold=0.5, max_round_trips=1))
+    _arm(lc)
+    lc.register_entry()
+    # Big loss AND last allowed trip -> max-trades wins
+    lc.register_close(realized_points=-1.0, cumulative_points=-1.0)
+    assert lc.state == GuardrailsState.MAX_TRADES_HIT
+
+
+def test_round_trips_reset_on_clock_out():
+    lc = GuardrailsLifecycle(config=_config(daily_goal=100.0, max_round_trips=1))
+    _arm(lc)
+    lc.register_entry()
+    lc.register_close(realized_points=0.5, cumulative_points=0.5)
+    assert lc.state == GuardrailsState.MAX_TRADES_HIT
+    lc.clock_out()
+    assert lc.state == GuardrailsState.CLOCKED_OUT
+    assert lc.round_trips == 0
 
 
 def test_loss_cooldown_expires_to_armed():
@@ -243,6 +301,8 @@ def test_guardrails_required_lists_missing(monkeypatch):
         "IB_LOSS_COOLDOWN_THRESHOLD",
         "IB_LOSS_COOLDOWN_SECONDS",
         "IB_REARM_COOLDOWN_SECONDS",
+        "IB_TRADE_COOLDOWN_SECONDS",
+        "IB_MAX_ROUND_TRIPS",
     }
 
 
@@ -251,6 +311,8 @@ def test_guardrails_required_empty_when_set(monkeypatch):
     monkeypatch.setenv("IB_LOSS_COOLDOWN_THRESHOLD", "0.5")
     monkeypatch.setenv("IB_LOSS_COOLDOWN_SECONDS", "120")
     monkeypatch.setenv("IB_REARM_COOLDOWN_SECONDS", "300")
+    monkeypatch.setenv("IB_TRADE_COOLDOWN_SECONDS", "30")
+    monkeypatch.setenv("IB_MAX_ROUND_TRIPS", "5")
     from iborker.config import IBSettings
 
     s = IBSettings(_env_file=None)

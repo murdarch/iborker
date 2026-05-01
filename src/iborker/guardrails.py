@@ -29,10 +29,12 @@ class GuardrailsState(str, Enum):
     ARM_PROMPT = "arm_prompt"
     ARMED = "armed"
     IN_POSITION = "in_position"
+    TRADE_COOLDOWN = "trade_cooldown"
     LOSS_COOLDOWN = "loss_cooldown"
     GOAL_HIT = "goal_hit"
     REARM_PROMPT = "rearm_prompt"
     REARM_COOLDOWN = "rearm_cooldown"
+    MAX_TRADES_HIT = "max_trades_hit"
 
 
 CHECKLIST_QUESTIONS: tuple[str, ...] = (
@@ -52,6 +54,8 @@ class GuardrailsConfig:
     loss_cooldown_threshold: float
     loss_cooldown_seconds: int
     rearm_cooldown_seconds: int
+    trade_cooldown_seconds: int
+    max_round_trips: int
     clock_in_countdown_minutes: int = 15
 
 
@@ -69,6 +73,7 @@ class GuardrailsLifecycle:
     deadline: datetime | None = None
     last_checklist: tuple[str, ...] = field(default_factory=tuple)
     last_rearm_reason: str = ""
+    round_trips: int = 0
 
     # ── Internal helpers ───────────────────────────────────────────────────
 
@@ -100,10 +105,11 @@ class GuardrailsLifecycle:
         if self.state == GuardrailsState.COUNTDOWN:
             self.state = GuardrailsState.CHECKLIST
             self.deadline = None
-        elif self.state == GuardrailsState.LOSS_COOLDOWN:
-            self.state = GuardrailsState.ARMED
-            self.deadline = None
-        elif self.state == GuardrailsState.REARM_COOLDOWN:
+        elif self.state in (
+            GuardrailsState.LOSS_COOLDOWN,
+            GuardrailsState.REARM_COOLDOWN,
+            GuardrailsState.TRADE_COOLDOWN,
+        ):
             self.state = GuardrailsState.ARMED
             self.deadline = None
 
@@ -114,6 +120,7 @@ class GuardrailsLifecycle:
         if self.state != GuardrailsState.CLOCKED_OUT:
             return False
         self.state = GuardrailsState.COUNTDOWN
+        self.round_trips = 0
         self._set_deadline(self.config.clock_in_countdown_minutes * 60)
         return True
 
@@ -184,6 +191,7 @@ class GuardrailsLifecycle:
         """Reset to CLOCKED_OUT from any state.  Used on disconnect."""
         self.state = GuardrailsState.CLOCKED_OUT
         self.deadline = None
+        self.round_trips = 0
 
     # ── Trader-driven notifications ────────────────────────────────────────
 
@@ -195,12 +203,21 @@ class GuardrailsLifecycle:
     def register_close(self, realized_points: float, cumulative_points: float) -> None:
         """Notify that a closing order filled and position is now flat.
 
-        Evaluates next state:
-          - loss > threshold → LOSS_COOLDOWN
-          - cumulative ≥ daily goal → GOAL_HIT
-          - otherwise → ARMED
+        Increments the round-trip counter, then evaluates next state in
+        priority order:
+          1. round_trips ≥ max → MAX_TRADES_HIT (terminal)
+          2. loss > threshold → LOSS_COOLDOWN
+          3. cumulative ≥ daily goal → GOAL_HIT
+          4. otherwise → TRADE_COOLDOWN
         """
         if self.state != GuardrailsState.IN_POSITION:
+            return
+
+        self.round_trips += 1
+
+        if self.round_trips >= self.config.max_round_trips:
+            self.state = GuardrailsState.MAX_TRADES_HIT
+            self.deadline = None
             return
 
         if realized_points < -self.config.loss_cooldown_threshold:
@@ -213,7 +230,8 @@ class GuardrailsLifecycle:
             self.deadline = None
             return
 
-        self.state = GuardrailsState.ARMED
+        self.state = GuardrailsState.TRADE_COOLDOWN
+        self._set_deadline(self.config.trade_cooldown_seconds)
 
     # ── Read-only views for the UI ─────────────────────────────────────────
 
@@ -239,4 +257,5 @@ class GuardrailsLifecycle:
             GuardrailsState.COUNTDOWN,
             GuardrailsState.LOSS_COOLDOWN,
             GuardrailsState.REARM_COOLDOWN,
+            GuardrailsState.TRADE_COOLDOWN,
         )

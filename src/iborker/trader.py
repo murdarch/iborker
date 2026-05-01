@@ -632,15 +632,29 @@ class ClickTrader:
         if lc is None:
             return ""
         s = lc.state
+        # Trips counter shown once we're past the arming flow
+        trips_suffix = ""
+        if s in (
+            GuardrailsState.ARMED,
+            GuardrailsState.IN_POSITION,
+            GuardrailsState.TRADE_COOLDOWN,
+            GuardrailsState.LOSS_COOLDOWN,
+            GuardrailsState.GOAL_HIT,
+            GuardrailsState.REARM_PROMPT,
+            GuardrailsState.REARM_COOLDOWN,
+            GuardrailsState.MAX_TRADES_HIT,
+        ):
+            trips_suffix = f"  [trips {lc.round_trips}/{lc.config.max_round_trips}]"
         if s in (
             GuardrailsState.COUNTDOWN,
             GuardrailsState.LOSS_COOLDOWN,
             GuardrailsState.REARM_COOLDOWN,
+            GuardrailsState.TRADE_COOLDOWN,
         ):
             secs = int(lc.remaining_seconds())
             mm, ss = divmod(secs, 60)
-            return f"{s.value.upper()} {mm:d}:{ss:02d}"
-        return s.value.upper()
+            return f"{s.value.upper()} {mm:d}:{ss:02d}{trips_suffix}"
+        return f"{s.value.upper()}{trips_suffix}"
 
     # ── Guardrails modal builders ────────────────────────────────────────
 
@@ -1296,6 +1310,8 @@ def main(
             loss_cooldown_threshold=settings.loss_cooldown_threshold,
             loss_cooldown_seconds=settings.loss_cooldown_seconds,
             rearm_cooldown_seconds=settings.rearm_cooldown_seconds,
+            trade_cooldown_seconds=settings.trade_cooldown_seconds,
+            max_round_trips=settings.max_round_trips,
             clock_in_countdown_minutes=settings.clock_in_countdown_minutes,
         )
         trader.lifecycle = GuardrailsLifecycle(config=cfg)

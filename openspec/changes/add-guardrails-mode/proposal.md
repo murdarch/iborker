@@ -31,3 +31,12 @@ The existing `TradingGuard` (time gate + meeting gate) blocks impulsive *windows
   - `src/iborker/trader.py` — wire up new mode, button-state machine, modal UI, journal hooks
   - `tests/test_guardrails.py` — new tests for state transitions and config validation
   - `.gitignore` — add `workspace/` so journals stay local
+
+## Refinements
+
+After the first day of live use, two additions kept the mode honest:
+
+1. **Per-trade cooldown** (`IB_TRADE_COOLDOWN_SECONDS`). The original spec only cooled the trader off after *big* losses; small losses, breakevens, and wins flowed straight back to ARMED, which let momentum carry into the next trade. A short forced pause after every close gives the brain a reset. Mutually exclusive with the loss cooldown — a close triggers exactly one cooldown.
+2. **Max round trips** (`IB_MAX_ROUND_TRIPS`). A hard cap on round trips per session. When hit, the lifecycle enters a **terminal lockout** — no re-arm path, no typed-reason override. Only clock-out (disconnect / next session) resets the counter. Distinct in spirit from the daily-goal re-arm: that one is "I'm ahead, do I want to push?"; this one is "I've taken enough swings, anything more is forcing."
+
+Both new env vars are required when `--guardrails-on` is set; same fail-fast validation as the originals.

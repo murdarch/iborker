@@ -51,3 +51,16 @@
 
 - [x] 7.1 README section: `--guardrails-on` flag, required env vars, lifecycle summary
 - [x] 7.2 Mention in `--help` text
+
+## 8. Refinements (post-day-1 use)
+
+- [x] 8.1 Add `trade_cooldown_seconds: int | None` and `max_round_trips: int | None` to `IBSettings`; extend `guardrails_required()` to require them
+- [x] 8.2 Add `TRADE_COOLDOWN` and `MAX_TRADES_HIT` to `GuardrailsState`; add `trade_cooldown_seconds: int` and `max_round_trips: int` to `GuardrailsConfig`
+- [x] 8.3 Add `round_trips: int = 0` to `GuardrailsLifecycle`; reset to 0 in `clock_in()` and `clock_out()`
+- [x] 8.4 In `register_close()`, increment `round_trips` first, then evaluate priority chain: `MAX_TRADES_HIT` > `LOSS_COOLDOWN` > `GOAL_HIT` > `TRADE_COOLDOWN`
+- [x] 8.5 In `tick()`, expire `TRADE_COOLDOWN` to `ARMED`
+- [x] 8.6 Update `entry_buttons_enabled` / `flatten_enabled` so `MAX_TRADES_HIT` and `TRADE_COOLDOWN` disable everything
+- [x] 8.7 Pass new config fields from `trader.main()` into `GuardrailsConfig`
+- [x] 8.8 Show round-trip counter in lifecycle status text
+- [x] 8.9 Tests: trade cooldown after win, after small loss; max trips terminal; precedence over loss cooldown; counter reset on clock_out
+- [x] 8.10 Update README env-vars table and lifecycle summary

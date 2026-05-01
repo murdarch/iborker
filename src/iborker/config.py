@@ -32,6 +32,8 @@ class IBSettings(BaseSettings):
     loss_cooldown_threshold: float | None = None
     loss_cooldown_seconds: int | None = None
     rearm_cooldown_seconds: int | None = None
+    trade_cooldown_seconds: int | None = None
+    max_round_trips: int | None = None
     clock_in_countdown_minutes: int = 15
 
     @classmethod
@@ -52,6 +54,10 @@ class IBSettings(BaseSettings):
             missing.append("IB_LOSS_COOLDOWN_SECONDS")
         if s.rearm_cooldown_seconds is None:
             missing.append("IB_REARM_COOLDOWN_SECONDS")
+        if s.trade_cooldown_seconds is None:
+            missing.append("IB_TRADE_COOLDOWN_SECONDS")
+        if s.max_round_trips is None:
+            missing.append("IB_MAX_ROUND_TRIPS")
         return missing
 
 

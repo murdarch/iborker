@@ -86,9 +86,11 @@ Required env vars (trader exits at startup with a list of any missing):
 | Var | Meaning |
 |-----|---------|
 | `IB_DAILY_GOAL` | Daily session goal in points; once cumulative ≥ goal, trade buttons disable until you re-arm with a typed reason |
-| `IB_LOSS_COOLDOWN_THRESHOLD` | Per-trade realized loss (points) above which a cooldown triggers |
+| `IB_LOSS_COOLDOWN_THRESHOLD` | Per-trade realized loss (points) above which the *long* loss cooldown triggers |
 | `IB_LOSS_COOLDOWN_SECONDS` | Length of the loss cooldown |
+| `IB_TRADE_COOLDOWN_SECONDS` | Length of the per-trade cooldown that fires after every close that isn't a big loss |
 | `IB_REARM_COOLDOWN_SECONDS` | Length of the post-re-arm cooldown |
+| `IB_MAX_ROUND_TRIPS` | Hard cap on round trips per session; once hit the lifecycle locks out terminally until clock-out |
 | `IB_CLOCK_IN_COUNTDOWN_MINUTES` | (optional, default 15) length of the clock-in countdown |
 
 Lifecycle (per session):
@@ -98,9 +100,10 @@ Lifecycle (per session):
 3. **Arm prompt** — explicit yes/no to enable trading.
 4. **Armed** — BUY / SELL / FLATTEN enabled. REVERSE is hidden in this mode.
 5. **In position** — BUY and SELL disable; only FLATTEN exits.
-6. **Cooldown** — a realized loss > threshold disables all trade buttons for the cooldown duration.
+6. **After every close** — exactly one cooldown fires: a big loss (> `IB_LOSS_COOLDOWN_THRESHOLD`) triggers the long loss cooldown, anything else triggers the short per-trade cooldown.
 7. **Goal hit** — when cumulative points ≥ `IB_DAILY_GOAL`, trade buttons disable and a *Re-arm* button appears. Click it, type a reason, then wait out `IB_REARM_COOLDOWN_SECONDS`.
-8. **Disconnect** resets the lifecycle to clocked-out — no persisted state across reconnects.
+8. **Max round trips** — once you've taken `IB_MAX_ROUND_TRIPS` round trips, the lifecycle locks out terminally for the session. No re-arm. Only clock-out / disconnect resets the counter.
+9. **Disconnect** resets the lifecycle to clocked-out — no persisted state across reconnects.
 
 Clock-in time, checklist responses, and re-arm reasons are appended to
 `workspace/journal/YYYY-MM-DD.md` (gitignored).
