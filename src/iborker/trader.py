@@ -306,6 +306,7 @@ class ClickTrader:
         prev_avg_cost = self.state.avg_cost
 
         order = MarketOrder(action=action, totalQuantity=quantity)
+        order.tif = "DAY"
         order.account = self.state.account
         trade = self.ib.placeOrder(self.state.contract, order)
         self._update_status(f"Order placed: {action} {quantity}")
